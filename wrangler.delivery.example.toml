@@ -1,0 +1,38 @@
+# 占位说明 — 客户部署由 cizhenyu_deploy 注入真实值
+# 切勿把真实 wrangler.toml 打进交付包。
+
+name = "cizhenyu-CHANGE_ME-crm"
+main = "worker/index.js"
+compatibility_date = "2024-10-07"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "cizhenyu-d1-crm-db"
+database_id = "REPLACE_AT_DEPLOY"
+
+[[r2_buckets]]
+binding = "MEDIA_BUCKET"
+bucket_name = "cizhenyu-r2-crm-media"
+
+[[durable_objects.bindings]]
+name = "COORDINATOR"
+class_name = "ChatCoordinator"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ChatCoordinator"]
+
+[ai]
+binding = "AI"
+
+[[vectorize]]
+binding = "VECTORIZE_INDEX"
+index_name = "cizhenyu-crm-kb"
+
+[vars]
+ADMIN_PATH_SECRET = "CHANGE_ME"
+ADMIN_SECURITY_CODE = "CHANGE_ME"
+PRIVATE_CHAT_DEVELOPER_KEY = "CHANGE_ME"
+TURNSTILE_SITE_KEY = "CHANGE_ME"
+TURNSTILE_SECRET_KEY = "CHANGE_ME"

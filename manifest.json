@@ -1,0 +1,32 @@
+{
+  "kind": "crm-worker",
+  "version": "20261009",
+  "entry": "index.js",
+  "assetsDir": "client",
+  "migrationsDir": "migrations",
+  "bindings": [
+    "DB",
+    "MEDIA_BUCKET",
+    "COORDINATOR",
+    "AI",
+    "VECTORIZE_INDEX",
+    "ASSETS"
+  ],
+  "durableObjects": [
+    {
+      "name": "COORDINATOR",
+      "className": "ChatCoordinator",
+      "tag": "v1"
+    }
+  ],
+  "vectorize": {
+    "binding": "VECTORIZE_INDEX",
+    "dimensions": 1024,
+    "metric": "cosine"
+  },
+  "compatibility_date": "2024-10-07",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "sanitized": true
+}

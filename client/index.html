@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cloudflare IM - 纯边缘云架构的仿微信在线客服与即时通讯系统</title>
+  <meta name="description" content="Cloudflare IM 是一套 100% 运行于 Cloudflare 边缘生态的高性能在线客服与即时通讯系统。基于 Workers、Durable Objects、D1 边缘数据库与 R2 免流对象存储，提供仿微信交互悬浮球、文字/Emoji、图片、语音条录制与多语言实时沟通能力。" />
+  <meta name="keywords" content="在线客服系统,即时通讯,Cloudflare Workers,Durable Objects,D1数据库,R2存储,WebRTC,仿微信聊天,实时客服浮窗" />
+  <meta name="author" content="Cloudflare IM Team" />
+  <meta name="robots" content="index, follow" />
+  <link rel="canonical" href="https://chat.ycz.me/" />
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://chat.ycz.me/" />
+  <meta property="og:title" content="Cloudflare IM - 纯边缘云架构的仿微信在线客服系统" />
+  <meta property="og:description" content="零服务器运维、零出口流量费。基于 Cloudflare Workers + Durable Objects + D1 + R2 构建的企业级实时即时通讯解决方案。" />
+  <meta property="og:locale" content="zh_CN" />
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Cloudflare IM - 在线客服与即时通讯系统" />
+  <meta name="twitter:description" content="全栈运行于 Cloudflare 边缘，极速毫秒级响应，仿微信交互体验。" />
+
+  <!-- Schema.org JSON-LD 结构化数据 (SEO / GEO 优化) -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Cloudflare IM 在线客服系统",
+    "operatingSystem": "Cloudflare Edge / All Modern Browsers",
+    "applicationCategory": "BusinessApplication, CommunicationApplication",
+    "description": "基于 Cloudflare 免费生态构建的轻量级仿微信在线客服系统，支持文本、Emoji、语音条录制、图片及文件传输。",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "featureList": [
+      "仿微信绿色悬浮球交互",
+      "单行代码嵌入任意第三方网站",
+      "基于 Durable Objects 与 WebSocket 的低延迟即时通讯",
+      "Cloudflare D1 边缘数据库历史聊天漫游",
+      "Cloudflare R2 免流多媒体文件与语音条存储",
+      "全动态多语言支持与后台自动回复设置"
+    ]
+  }
+  </script>
+
+  <style>
+    :root {
+      --primary: #07c160;
+      --bg: #f8fafc;
+      --text: #0f172a;
+      --text-muted: #64748b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+    header.site-header {
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid #e2e8f0;
+      position: sticky;
+      top: 0;
+      z-index: 30;
+    }
+    .nav-container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 0 24px;
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: var(--text);
+      font-weight: 700;
+      font-size: 1.1rem;
+    }
+    .logo-icon {
+      width: 36px;
+      height: 36px;
+      background: var(--primary);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: bold;
+    }
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+    .hero {
+      text-align: center;
+      max-width: 800px;
+      margin: 0 auto 56px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #ecfdf5;
+      border: 1px solid #a7f3d0;
+      color: #047857;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      margin-bottom: 24px;
+    }
+    .badge-dot {
+      width: 8px;
+      height: 8px;
+      background: var(--primary);
+      border-radius: 50%;
+    }
+    h1 {
+      font-size: 2.75rem;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      line-height: 1.25;
+      margin-bottom: 20px;
+    }
+    .highlight { color: var(--primary); }
+    .hero-desc {
+      font-size: 1.125rem;
+      color: var(--text-muted);
+      max-width: 680px;
+      margin: 0 auto;
+    }
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 24px;
+      margin-bottom: 60px;
+    }
+    .card {
+      background: white;
+      border: 1px solid #e2e8f0;
+      border-radius: 20px;
+      padding: 28px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .card-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.25rem;
+      margin-bottom: 18px;
+    }
+    .card-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+      color: #1e293b;
+    }
+    .card-text {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+    .code-section {
+      background: white;
+      border: 1px solid #e2e8f0;
+      border-radius: 20px;
+      padding: 32px;
+      margin-bottom: 60px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .code-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .code-desc {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      margin-bottom: 16px;
+    }
+    .code-block {
+      background: #0f172a;
+      color: #34d399;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.875rem;
+      padding: 18px 24px;
+      border-radius: 14px;
+      overflow-x: auto;
+    }
+    .callout {
+      background: linear-gradient(135deg, #ecfdf5 0%, #f0fdf4 100%);
+      border: 1px solid #bbf7d0;
+      border-radius: 20px;
+      padding: 32px;
+      text-align: center;
+    }
+    .callout h2 {
+      font-size: 1.4rem;
+      color: #065f46;
+      margin-bottom: 10px;
+      font-weight: 700;
+    }
+    .callout p {
+      font-size: 0.95rem;
+      color: #047857;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    footer.site-footer {
+      border-top: 1px solid #e2e8f0;
+      padding: 32px 24px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="nav-container">
+      <a href="/" class="logo">
+        <div class="logo-icon">客</div>
+        <span>Cloudflare IM 客服系统</span>
+      </a>
+      <div style="font-size: 0.82rem; color: #64748b;">
+        高可用 · 零服务器运维 · 边缘云原生
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="hero">
+      <div class="badge">
+        <span class="badge-dot"></span>
+        100% 运行于 Cloudflare 全球边缘服务网络
+      </div>
+      <h1>
+        新一代高性能<br />
+        <span class="highlight">仿微信在线客服与即时通讯系统</span>
+      </h1>
+      <p class="hero-desc">
+        专为现代企业与网站打造的轻量级实时客服方案。基于 Cloudflare Workers 与 Durable Objects 构建，无需购买服务器，即可享有低延迟、高并发与零出口流量费的多媒体即时通讯能力。
+      </p>
+    </section>
+
+    <section class="features-grid">
+      <article class="card">
+        <div class="card-icon" style="background: #ecfdf5; color: #07c160;">⚡</div>
+        <h2 class="card-title">边缘实时双向通讯</h2>
+        <p class="card-text">
+          采用 Cloudflare SQLite Durable Objects 与 WebSocket Hibernation 技术，实现消息毫秒级直达与连接休眠零计费。
+        </p>
+      </article>
+
+      <article class="card">
+        <div class="card-icon" style="background: #eff6ff; color: #2563eb;">💬</div>
+        <h2 class="card-title">仿微信全能多媒体</h2>
+        <p class="card-text">
+          支持文字聊天、丰富表情、大图预览、麦克风原生录制仿微信语音条及附件高速下载。
+        </p>
+      </article>
+
+      <article class="card">
+        <div class="card-icon" style="background: #f5f3ff; color: #7c3aed;">🌐</div>
+        <h2 class="card-title">全动态多语言系统</h2>
+        <p class="card-text">
+          完全基于后台可自由扩充的多语言体系，默认中文兜底，可自由添加英语、日语等语种并自定义翻译词条。
+        </p>
+      </article>
+
+      <article class="card">
+        <div class="card-icon" style="background: #fffbeb; color: #d97706;">💾</div>
+        <h2 class="card-title">D1 边缘历史持久化</h2>
+        <p class="card-text">
+          完整集成 Cloudflare D1 分布式 SQLite 关系型边缘数据库，自动持久化会话脉络与每一条聊天历史。
+        </p>
+      </article>
+
+      <article class="card">
+        <div class="card-icon" style="background: #fdf2f8; color: #db2777;">📁</div>
+        <h2 class="card-title">R2 零出口费存储</h2>
+        <p class="card-text">
+          语音条、图片与附件文件存入 Cloudflare R2 对象存储，彻底摆脱传统云存储高昂的流量费负担。
+        </p>
+      </article>
+
+      <article class="card">
+        <div class="card-icon" style="background: #f0fdfa; color: #0d9488;">🛡️</div>
+        <h2 class="card-title">双重安全防护</h2>
+        <p class="card-text">
+          管理端采用动态安全码与 Cloudflare Turnstile 智能无感人机验证，强力阻断脚本爆破与恶意攻击。
+        </p>
+      </article>
+    </section>
+
+    <section class="code-section">
+      <h2 class="code-title">极简接入：任何网站只需一行代码</h2>
+      <p class="code-desc">
+        将下方脚本标签粘贴至您网站的 HTML 页面中，右下角将即刻呈现仿微信悬浮聊天小球：
+      </p>
+      <pre class="code-block"><code>&lt;script src="https://chat.ycz.me/widget.js"&gt;&lt;/script&gt;</code></pre>
+    </section>
+
+    <section class="callout">
+      <h2>即刻体验在线客服</h2>
+      <p>
+        请查看当前页面右下角绿色仿微信悬浮小气泡，点击即可展开支持多语言、表情、图片、文件与语音录制的实时客服面板！
+      </p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>© 2026 Cloudflare IM. All rights reserved. Powered by Cloudflare Edge Network.</p>
+  </footer>
+
+  <!-- 引入浮窗组件自测，实时展示效果 -->
+  <script src="/widget.js"></script>
+</body>
+</html>
