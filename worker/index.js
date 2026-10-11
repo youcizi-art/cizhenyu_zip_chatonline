@@ -4863,6 +4863,7 @@ authRouter.get("/online-status", async (c) => {
   try {
     const res = await c.env.DB.prepare("SELECT count(1) as count FROM agents WHERE status = 'online'").first();
     const count3 = res?.count || 0;
+    c.header("Cache-Control", "public, max-age=60, s-maxage=60");
     return c.json({
       success: true,
       data: {
@@ -5153,6 +5154,8 @@ chatRouter.get("/widget/config", async (c) => {
     const button_title = await getSystemSetting(c.env.DB, "widget_button_title") || "\u5728\u7EBF\u5BA2\u670D";
     const allowed_domains = await getSystemSetting(c.env.DB, "allowed_domains") || "";
     const widget_items_json = await getSystemSetting(c.env.DB, "widget_items_json") || "";
+    const welcome_message = await getSystemSetting(c.env.DB, "welcome_message_zh") || await getSystemSetting(c.env.DB, "welcome_message") || "\u60A8\u597D\uFF01\u6B22\u8FCE\u4F7F\u7528\u5728\u7EBF\u5BA2\u670D\u7CFB\u7EDF\uFF0C\u8BF7\u95EE\u6709\u4EC0\u4E48\u53EF\u4EE5\u5E2E\u60A8\uFF1F";
+    c.header("Cache-Control", "public, max-age=86400, s-maxage=86400");
     return c.json({
       success: true,
       data: {
@@ -5161,7 +5164,8 @@ chatRouter.get("/widget/config", async (c) => {
         custom_icon,
         button_title,
         allowed_domains,
-        widget_items_json
+        widget_items_json,
+        welcome_message
       }
     });
   } catch (err) {
