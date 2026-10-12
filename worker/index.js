@@ -5650,7 +5650,8 @@ uploadRouter.post("/upload", async (c) => {
         contentType: file.type || "application/octet-stream"
       }
     });
-    const url = `/media/${fileKey}`;
+    const origin = new URL(c.req.url).origin;
+    const url = `${origin}/media/${fileKey}`;
     return c.json({
       success: true,
       data: {
