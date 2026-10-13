@@ -1241,6 +1241,48 @@ var init_settings = __esm({
   }
 });
 
+// src/shared/langSettings.ts
+function settingKeyCandidates(baseKey, langCode) {
+  const code = (langCode || "").trim();
+  if (!code)
+    return [baseKey];
+  const lower = code.toLowerCase();
+  const underscored = lower.replace(/-/g, "_");
+  const dashed = underscored.replace(/_/g, "-");
+  const primary = lower.split(/[-_]/)[0];
+  const keys = [
+    `${baseKey}_${code}`,
+    `${baseKey}_${lower}`,
+    `${baseKey}_${underscored}`,
+    `${baseKey}_${dashed}`,
+    `${baseKey}_${primary}`
+  ];
+  return [...new Set(keys)];
+}
+function getSettingForLang(settings, baseKey, langCode, fallback = "") {
+  for (const key of settingKeyCandidates(baseKey, langCode)) {
+    const val = settings[key];
+    if (val != null && String(val).trim() !== "")
+      return String(val);
+  }
+  const bare = settings[baseKey];
+  if (bare != null && String(bare).trim() !== "")
+    return String(bare);
+  return fallback;
+}
+var DEFAULT_WELCOME_ZH;
+var init_langSettings = __esm({
+  "src/shared/langSettings.ts"() {
+    "use strict";
+    init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+    init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+    init_performance2();
+    __name(settingKeyCandidates, "settingKeyCandidates");
+    __name(getSettingForLang, "getSettingForLang");
+    DEFAULT_WELCOME_ZH = "\u60A8\u597D\uFF01\u6B22\u8FCE\u4F7F\u7528\u5728\u7EBF\u5BA2\u670D\u7CFB\u7EDF\uFF0C\u8BF7\u95EE\u6709\u4EC0\u4E48\u53EF\u4EE5\u5E2E\u60A8\uFF1F";
+  }
+});
+
 // src/worker/db/conversations.ts
 var conversations_exports = {};
 __export(conversations_exports, {
@@ -1345,10 +1387,10 @@ async function getOrCreateConversation(db, visitorId, visitorName, visitorLang, 
   const now = Date.now();
   const name = visitorName || `\u8BBF\u5BA2_${visitorId.slice(-4)}`;
   const allocated = await findLeastLoadedOnlineAgent(db);
-  const langKey = visitorLang ? visitorLang.toLowerCase().replace("-", "_") : "zh";
-  let welcomeMsg = await getSystemSetting(db, `welcome_message_${langKey}`);
+  const settingsMap = await getSystemSettings(db);
+  let welcomeMsg = getSettingForLang(settingsMap, "welcome_message", visitorLang || "en", "");
   if (!welcomeMsg) {
-    welcomeMsg = await getSystemSetting(db, "welcome_message_zh") || "\u60A8\u597D\uFF01\u6B22\u8FCE\u4F7F\u7528\u5728\u7EBF\u5BA2\u670D\u7CFB\u7EDF\uFF0C\u8BF7\u95EE\u6709\u4EC0\u4E48\u53EF\u4EE5\u5E2E\u60A8\uFF1F";
+    welcomeMsg = getSettingForLang(settingsMap, "welcome_message", "en", "") || getSettingForLang(settingsMap, "welcome_message", "zh-CN", "") || settingsMap.welcome_message || DEFAULT_WELCOME_ZH;
   }
   await db.prepare(
     `INSERT INTO conversations (
@@ -1640,6 +1682,7 @@ var init_conversations = __esm({
     init_performance2();
     init_settings();
     init_auth();
+    init_langSettings();
     __name(getOrCreateConversation, "getOrCreateConversation");
     __name(updateConversationContext, "updateConversationContext");
     __name(getVisitorJourneyLogs, "getVisitorJourneyLogs");
@@ -2375,9 +2418,9 @@ ${searchResults[0].chunk.content}` : "\u60A8\u597D\uFF01\u4EBA\u5DE5\u5BA2\u670D
   }
 }
 async function translateContentWithAi(env2, params) {
-  const { sourceLang, targetLangs, fields } = params;
+  const { sourceLang, targetLangs, fields, langLabels = {} } = params;
   if (!targetLangs || targetLangs.length === 0 || !fields || Object.keys(fields).length === 0) {
-    return { translations: {}, used_channel: "none" };
+    return { translations: {}, results: {}, used_channel: "none" };
   }
   let modelPool = DEFAULT_MODEL_POOL;
   try {
@@ -2389,22 +2432,33 @@ async function translateContentWithAi(env2, params) {
     }
   } catch (e) {
   }
+  const labelOf = /* @__PURE__ */ __name((code) => {
+    const name = (langLabels[code] || "").trim();
+    return name ? `${name} (${code})` : code;
+  }, "labelOf");
   const translations = {};
+  const results = {};
   let lastUsedChannel = "unknown";
+  const sourceLabel = labelOf(sourceLang);
   for (const targetLang of targetLangs) {
     if (targetLang === sourceLang)
       continue;
+    const targetLabel = labelOf(targetLang);
     const prompt = `\u4F60\u662F\u4E00\u4E2A\u591A\u8BED\u8A00\u672C\u5730\u5316\u7FFB\u8BD1\u5F15\u64CE\u3002
-\u8BF7\u5C06\u4EE5\u4E0B JSON \u4E2D\u7684\u6BCF\u4E2A\u5B57\u6BB5\u4ECE\u6E90\u8BED\u8A00\u3010${sourceLang}\u3011\u7FFB\u8BD1\u4E3A\u76EE\u6807\u8BED\u8A00\u3010${targetLang}\u3011\u3002
+\u8BF7\u5C06\u4EE5\u4E0B JSON \u4E2D\u6BCF\u4E2A\u5B57\u6BB5\u7684\u300C\u503C\u300D\u4ECE\u6E90\u8BED\u8A00\u3010${sourceLabel}\u3011\u7FFB\u8BD1\u4E3A\u76EE\u6807\u8BED\u8A00\u3010${targetLabel}\u3011\u3002
+\u8BF4\u660E\uFF1AJSON \u7684 Key \u662F\u5B57\u6BB5\u6807\u8BC6\uFF0C\u4E0D\u8981\u7FFB\u8BD1 Key\uFF1B\u53EA\u7FFB\u8BD1\u6BCF\u4E2A Key \u5BF9\u5E94\u7684\u6587\u672C\u5185\u5BB9\u3002
 \u89C4\u5219\u8981\u6C42\uFF1A
-1. \u4FDD\u6301\u539F\u6587\u5546\u4E1A\u3001\u8425\u9500\u4E0E\u4EA7\u54C1\u8BF4\u660E\u7684\u4E13\u4E1A\u8BED\u6C14\uFF0C\u8BD1\u6587\u81EA\u7136\u51C6\u786E\uFF1B
-2. \u82E5\u6587\u672C\u5305\u542B HTML \u6807\u7B7E\uFF08\u5982 <p>, <h1>, <ul>, <li>, <img>, <a> \u7B49\uFF09\uFF0C\u5FC5\u987B\u4E25\u5BC6\u4FDD\u7559\u6240\u6709 HTML \u6807\u7B7E\u53CA\u5176\u5C5E\u6027\uFF0C\u4EC5\u7FFB\u8BD1\u6807\u7B7E\u4E4B\u95F4\u7684\u53EF\u8BFB\u6587\u5B57\uFF1B
-3. \u8F93\u51FA\u5FC5\u987B\u662F\u5408\u6CD5\u7EAF\u51C0\u7684 JSON \u683C\u5F0F\uFF0CKey \u4E0E\u8F93\u5165\u5B8C\u5168\u4E00\u81F4\uFF0C\u4E0D\u8981\u5305\u542B\u4EFB\u4F55 markdown \u89E3\u91CA\u6216\u989D\u5916\u5305\u88F9\u3002
+1. \u8BD1\u6587\u4F7F\u7528\u76EE\u6807\u8BED\u8A00\u3010${targetLabel}\u3011\uFF0C\u81EA\u7136\u3001\u51C6\u786E\u3001\u7B26\u5408\u5F53\u5730\u4E60\u60EF\uFF1B
+2. \u82E5\u6587\u672C\u5305\u542B HTML \u6807\u7B7E\uFF0C\u5FC5\u987B\u4FDD\u7559\u5168\u90E8\u6807\u7B7E\u4E0E\u5C5E\u6027\uFF0C\u4EC5\u7FFB\u8BD1\u6807\u7B7E\u4E4B\u95F4\u7684\u53EF\u8BFB\u6587\u5B57\uFF1B
+3. \u8F93\u51FA\u5FC5\u987B\u662F\u5408\u6CD5\u7EAF\u51C0 JSON\uFF0CKey \u4E0E\u8F93\u5165\u5B8C\u5168\u4E00\u81F4\uFF0C\u4E0D\u8981 markdown \u6216\u989D\u5916\u8BF4\u660E\u3002
 
 \u5F85\u7FFB\u8BD1 JSON \u6570\u636E\uFF1A
 ${JSON.stringify(fields, null, 2)}`;
     const messages = [
-      { role: "system", content: "You are a professional localization translation engine. You only reply with raw JSON." },
+      {
+        role: "system",
+        content: `You are a professional localization engine. Translate field values into ${targetLabel}. Reply with raw JSON only.`
+      },
       { role: "user", content: prompt }
     ];
     try {
@@ -2413,18 +2467,28 @@ ${JSON.stringify(fields, null, 2)}`;
       const cleaned = text.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
       const jsonStart = cleaned.indexOf("{");
       const jsonEnd = cleaned.lastIndexOf("}");
-      if (jsonStart !== -1 && jsonEnd !== -1) {
-        const parsed = JSON.parse(cleaned.substring(jsonStart, jsonEnd + 1));
-        translations[targetLang] = parsed;
-      } else {
-        translations[targetLang] = fields;
+      if (jsonStart === -1 || jsonEnd === -1) {
+        results[targetLang] = { ok: false, error: "\u6A21\u578B\u672A\u8FD4\u56DE\u5408\u6CD5 JSON" };
+        continue;
       }
+      const parsed = JSON.parse(cleaned.substring(jsonStart, jsonEnd + 1));
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        results[targetLang] = { ok: false, error: "\u6A21\u578B\u8FD4\u56DE\u7ED3\u6784\u65E0\u6548" };
+        continue;
+      }
+      const hasValue = Object.keys(fields).some((k) => typeof parsed[k] === "string" && parsed[k].trim() !== "");
+      if (!hasValue) {
+        results[targetLang] = { ok: false, error: "\u8BD1\u6587\u4E3A\u7A7A" };
+        continue;
+      }
+      translations[targetLang] = parsed;
+      results[targetLang] = { ok: true };
     } catch (err) {
       console.error(`AI translation failed for ${targetLang}:`, err);
-      translations[targetLang] = fields;
+      results[targetLang] = { ok: false, error: err?.message || "\u7FFB\u8BD1\u5F02\u5E38" };
     }
   }
-  return { translations, used_channel: lastUsedChannel };
+  return { translations, results, used_channel: lastUsedChannel };
 }
 var EMBEDDING_MODEL, DEPRECATED_MODEL_MAP, DEFAULT_MODEL_POOL;
 var init_kbService = __esm({
@@ -4998,6 +5062,142 @@ __name(markConversationAsRead, "markConversationAsRead");
 // src/worker/routes/chat.ts
 init_auth();
 init_settings();
+
+// src/worker/db/i18n.ts
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+init_performance2();
+async function getLanguages(db) {
+  const res = await db.prepare(
+    "SELECT code, name, is_default, created_at FROM i18n_languages ORDER BY is_default DESC, created_at ASC"
+  ).all();
+  return res.results || [];
+}
+__name(getLanguages, "getLanguages");
+async function addLanguage(db, code, name) {
+  const existing = await db.prepare("SELECT code FROM i18n_languages WHERE code = ?").bind(code).first();
+  if (existing) {
+    throw new Error(`\u8BED\u8A00\u4EE3\u7801 ${code} \u5DF2\u5B58\u5728`);
+  }
+  await db.prepare(
+    "INSERT INTO i18n_languages (code, name, is_default, created_at) VALUES (?, ?, 0, ?)"
+  ).bind(code, name, Date.now()).run();
+  const defaultTranslations = await db.prepare(
+    "SELECT key, value, is_custom FROM i18n_translations WHERE lang_code = 'zh-CN'"
+  ).all();
+  if (defaultTranslations.results) {
+    for (const item of defaultTranslations.results) {
+      const id = `${code}:${item.key}`;
+      await db.prepare(
+        "INSERT OR IGNORE INTO i18n_translations (id, lang_code, key, value, is_custom) VALUES (?, ?, ?, ?, ?)"
+      ).bind(id, code, item.key, item.value, item.is_custom || 0).run();
+    }
+  }
+}
+__name(addLanguage, "addLanguage");
+async function deleteLanguage(db, code) {
+  const lang = await db.prepare("SELECT is_default FROM i18n_languages WHERE code = ?").bind(code).first();
+  if (!lang)
+    throw new Error("\u8BED\u79CD\u4E0D\u5B58\u5728");
+  if (lang.is_default === 1) {
+    throw new Error("\u9ED8\u8BA4\u515C\u5E95\u8BED\u79CD\u4E0D\u53EF\u5220\u9664");
+  }
+  await db.prepare("DELETE FROM i18n_translations WHERE lang_code = ?").bind(code).run();
+  await db.prepare("DELETE FROM i18n_languages WHERE code = ?").bind(code).run();
+}
+__name(deleteLanguage, "deleteLanguage");
+async function setDefaultLanguage(db, code) {
+  await db.prepare("UPDATE i18n_languages SET is_default = 0").run();
+  await db.prepare("UPDATE i18n_languages SET is_default = 1 WHERE code = ?").bind(code).run();
+}
+__name(setDefaultLanguage, "setDefaultLanguage");
+async function ensureDescriptionColumn(db) {
+  try {
+    await db.prepare("ALTER TABLE i18n_translations ADD COLUMN description TEXT").run();
+  } catch {
+  }
+}
+__name(ensureDescriptionColumn, "ensureDescriptionColumn");
+async function getTranslations(db, langCode) {
+  await ensureDescriptionColumn(db);
+  let query = "SELECT lang_code, key, value, is_custom, description FROM i18n_translations";
+  let res;
+  try {
+    if (langCode) {
+      res = await db.prepare(query + " WHERE lang_code = ?").bind(langCode).all();
+    } else {
+      res = await db.prepare(query).all();
+    }
+  } catch {
+    const fallback = "SELECT lang_code, key, value, is_custom FROM i18n_translations";
+    if (langCode) {
+      res = await db.prepare(fallback + " WHERE lang_code = ?").bind(langCode).all();
+    } else {
+      res = await db.prepare(fallback).all();
+    }
+  }
+  const translations = {};
+  const customKeySet = /* @__PURE__ */ new Set();
+  const keyDescriptions = {};
+  if (res.results) {
+    for (const row of res.results) {
+      if (!translations[row.lang_code]) {
+        translations[row.lang_code] = {};
+      }
+      translations[row.lang_code][row.key] = row.value;
+      if (row.description) {
+        keyDescriptions[row.key] = row.description;
+      }
+      if (row.is_custom === 1) {
+        customKeySet.add(row.key);
+      }
+    }
+  }
+  return {
+    translations,
+    customKeys: Array.from(customKeySet),
+    keyDescriptions
+  };
+}
+__name(getTranslations, "getTranslations");
+async function saveTranslations(db, langCode, translations) {
+  for (const [key, value] of Object.entries(translations)) {
+    const id = `${langCode}:${key}`;
+    await db.prepare(
+      `INSERT INTO i18n_translations (id, lang_code, key, value) 
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(lang_code, key) DO UPDATE SET value = excluded.value`
+    ).bind(id, langCode, key, value).run();
+  }
+}
+__name(saveTranslations, "saveTranslations");
+async function addCustomKey(db, key, defaultValue, description) {
+  const cleanKey = key.trim();
+  if (!cleanKey)
+    throw new Error("\u8BCD\u6761\u952E\u540D\u4E0D\u80FD\u4E3A\u7A7A");
+  await ensureDescriptionColumn(db);
+  const memo = (description || "").trim();
+  const languages = await getLanguages(db);
+  for (const lang of languages) {
+    const id = `${lang.code}:${cleanKey}`;
+    await db.prepare(
+      `INSERT INTO i18n_translations (id, lang_code, key, value, is_custom, description)
+       VALUES (?, ?, ?, ?, 1, ?)
+       ON CONFLICT(lang_code, key) DO UPDATE SET description = excluded.description`
+    ).bind(id, lang.code, cleanKey, defaultValue, memo).run();
+  }
+}
+__name(addCustomKey, "addCustomKey");
+async function deleteCustomKey(db, key) {
+  const cleanKey = key.trim();
+  await db.prepare(
+    "DELETE FROM i18n_translations WHERE key = ? AND is_custom = 1"
+  ).bind(cleanKey).run();
+}
+__name(deleteCustomKey, "deleteCustomKey");
+
+// src/worker/routes/chat.ts
+init_langSettings();
 var chatRouter = new Hono2();
 chatRouter.post("/visitor/init", async (c) => {
   try {
@@ -5154,8 +5354,19 @@ chatRouter.get("/widget/config", async (c) => {
     const button_title = await getSystemSetting(c.env.DB, "widget_button_title") || "\u5728\u7EBF\u5BA2\u670D";
     const allowed_domains = await getSystemSetting(c.env.DB, "allowed_domains") || "";
     const widget_items_json = await getSystemSetting(c.env.DB, "widget_items_json") || "";
-    const welcome_message = await getSystemSetting(c.env.DB, "welcome_message_zh") || await getSystemSetting(c.env.DB, "welcome_message") || "\u60A8\u597D\uFF01\u6B22\u8FCE\u4F7F\u7528\u5728\u7EBF\u5BA2\u670D\u7CFB\u7EDF\uFF0C\u8BF7\u95EE\u6709\u4EC0\u4E48\u53EF\u4EE5\u5E2E\u60A8\uFF1F";
-    c.header("Cache-Control", "public, max-age=86400, s-maxage=86400");
+    const settingsMap = await getSystemSettings(c.env.DB);
+    const langs = await getLanguages(c.env.DB);
+    const welcome_messages = {};
+    for (const lang of langs) {
+      welcome_messages[lang.code] = getSettingForLang(
+        settingsMap,
+        "welcome_message",
+        lang.code,
+        ""
+      );
+    }
+    const welcome_message = welcome_messages["zh-CN"] || welcome_messages["en"] || settingsMap.welcome_message || settingsMap.welcome_message_zh || DEFAULT_WELCOME_ZH;
+    c.header("Cache-Control", "public, max-age=300, s-maxage=300");
     return c.json({
       success: true,
       data: {
@@ -5165,7 +5376,8 @@ chatRouter.get("/widget/config", async (c) => {
         button_title,
         allowed_domains,
         widget_items_json,
-        welcome_message
+        welcome_message,
+        welcome_messages
       }
     });
   } catch (err) {
@@ -5430,124 +5642,6 @@ adminRouter.post("/notify/test", async (c) => {
 init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
 init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
 init_performance2();
-
-// src/worker/db/i18n.ts
-init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
-init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
-init_performance2();
-async function getLanguages(db) {
-  const res = await db.prepare(
-    "SELECT code, name, is_default, created_at FROM i18n_languages ORDER BY is_default DESC, created_at ASC"
-  ).all();
-  return res.results || [];
-}
-__name(getLanguages, "getLanguages");
-async function addLanguage(db, code, name) {
-  const existing = await db.prepare("SELECT code FROM i18n_languages WHERE code = ?").bind(code).first();
-  if (existing) {
-    throw new Error(`\u8BED\u8A00\u4EE3\u7801 ${code} \u5DF2\u5B58\u5728`);
-  }
-  await db.prepare(
-    "INSERT INTO i18n_languages (code, name, is_default, created_at) VALUES (?, ?, 0, ?)"
-  ).bind(code, name, Date.now()).run();
-  const defaultTranslations = await db.prepare(
-    "SELECT key, value, is_custom FROM i18n_translations WHERE lang_code = 'zh-CN'"
-  ).all();
-  if (defaultTranslations.results) {
-    for (const item of defaultTranslations.results) {
-      const id = `${code}:${item.key}`;
-      await db.prepare(
-        "INSERT OR IGNORE INTO i18n_translations (id, lang_code, key, value, is_custom) VALUES (?, ?, ?, ?, ?)"
-      ).bind(id, code, item.key, item.value, item.is_custom || 0).run();
-    }
-  }
-}
-__name(addLanguage, "addLanguage");
-async function deleteLanguage(db, code) {
-  const lang = await db.prepare("SELECT is_default FROM i18n_languages WHERE code = ?").bind(code).first();
-  if (!lang)
-    throw new Error("\u8BED\u79CD\u4E0D\u5B58\u5728");
-  if (lang.is_default === 1) {
-    throw new Error("\u9ED8\u8BA4\u515C\u5E95\u8BED\u79CD\u4E0D\u53EF\u5220\u9664");
-  }
-  await db.prepare("DELETE FROM i18n_translations WHERE lang_code = ?").bind(code).run();
-  await db.prepare("DELETE FROM i18n_languages WHERE code = ?").bind(code).run();
-}
-__name(deleteLanguage, "deleteLanguage");
-async function setDefaultLanguage(db, code) {
-  await db.prepare("UPDATE i18n_languages SET is_default = 0").run();
-  await db.prepare("UPDATE i18n_languages SET is_default = 1 WHERE code = ?").bind(code).run();
-}
-__name(setDefaultLanguage, "setDefaultLanguage");
-async function getTranslations(db, langCode) {
-  let query = "SELECT lang_code, key, value, is_custom, description FROM i18n_translations";
-  let res;
-  if (langCode) {
-    query += " WHERE lang_code = ?";
-    res = await db.prepare(query).bind(langCode).all();
-  } else {
-    res = await db.prepare(query).all();
-  }
-  const translations = {};
-  const customKeySet = /* @__PURE__ */ new Set();
-  const keyDescriptions = {};
-  if (res.results) {
-    for (const row of res.results) {
-      if (!translations[row.lang_code]) {
-        translations[row.lang_code] = {};
-      }
-      translations[row.lang_code][row.key] = row.value;
-      if (row.description) {
-        keyDescriptions[row.key] = row.description;
-      }
-      if (row.is_custom === 1) {
-        customKeySet.add(row.key);
-      }
-    }
-  }
-  return {
-    translations,
-    customKeys: Array.from(customKeySet),
-    keyDescriptions
-  };
-}
-__name(getTranslations, "getTranslations");
-async function saveTranslations(db, langCode, translations) {
-  for (const [key, value] of Object.entries(translations)) {
-    const id = `${langCode}:${key}`;
-    await db.prepare(
-      `INSERT INTO i18n_translations (id, lang_code, key, value) 
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(lang_code, key) DO UPDATE SET value = excluded.value`
-    ).bind(id, langCode, key, value).run();
-  }
-}
-__name(saveTranslations, "saveTranslations");
-async function addCustomKey(db, key, defaultValue, description) {
-  const cleanKey = key.trim();
-  if (!cleanKey)
-    throw new Error("\u8BCD\u6761\u952E\u540D\u4E0D\u80FD\u4E3A\u7A7A");
-  const memo = (description || "").trim();
-  const languages = await getLanguages(db);
-  for (const lang of languages) {
-    const id = `${lang.code}:${cleanKey}`;
-    await db.prepare(
-      `INSERT INTO i18n_translations (id, lang_code, key, value, is_custom, description)
-       VALUES (?, ?, ?, ?, 1, ?)
-       ON CONFLICT(lang_code, key) DO UPDATE SET description = excluded.description`
-    ).bind(id, lang.code, cleanKey, defaultValue, memo).run();
-  }
-}
-__name(addCustomKey, "addCustomKey");
-async function deleteCustomKey(db, key) {
-  const cleanKey = key.trim();
-  await db.prepare(
-    "DELETE FROM i18n_translations WHERE key = ? AND is_custom = 1"
-  ).bind(cleanKey).run();
-}
-__name(deleteCustomKey, "deleteCustomKey");
-
-// src/worker/routes/i18n.ts
 var i18nRouter = new Hono2();
 i18nRouter.get("/languages", async (c) => {
   try {

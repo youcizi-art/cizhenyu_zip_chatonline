@@ -1,6 +1,6 @@
 {
   "kind": "crm-worker",
-  "version": "20261012",
+  "version": "20261013",
   "entry": "index.js",
   "assetsDir": "client",
   "migrationsDir": "migrations",
