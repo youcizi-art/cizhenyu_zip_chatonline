@@ -1493,7 +1493,7 @@ async function getVisitorJourneyLogs(db, conversationId) {
     return [];
   }
 }
-async function getConversations(db, agentId, isAdmin, platform2) {
+async function getConversations(db, _agentId, _isAdmin, platform2) {
   try {
     await db.prepare("ALTER TABLE conversations ADD COLUMN platform TEXT DEFAULT 'web'").run();
   } catch (e) {
@@ -1504,10 +1504,6 @@ async function getConversations(db, agentId, isAdmin, platform2) {
     sql += " AND (platform = ? OR (platform IS NULL AND ? = 'web'))";
     params.push(platform2, platform2);
   }
-  if (!isAdmin && agentId) {
-    sql += " AND (assigned_agent_id = ? OR assigned_agent_id IS NULL)";
-    params.push(agentId);
-  }
   sql += " ORDER BY last_message_time DESC LIMIT 150";
   try {
     let stmt = db.prepare(sql);
@@ -1517,17 +1513,8 @@ async function getConversations(db, agentId, isAdmin, platform2) {
     return res.results || [];
   } catch (err) {
     if (String(err?.message || "").includes("platform")) {
-      let fallbackSql = "SELECT * FROM conversations WHERE 1=1";
-      const fallbackParams = [];
-      if (!isAdmin && agentId) {
-        fallbackSql += " AND (assigned_agent_id = ? OR assigned_agent_id IS NULL)";
-        fallbackParams.push(agentId);
-      }
-      fallbackSql += " ORDER BY last_message_time DESC LIMIT 150";
-      let stmt = db.prepare(fallbackSql);
-      if (fallbackParams.length > 0)
-        stmt = stmt.bind(...fallbackParams);
-      const res = await stmt.all();
+      const fallbackSql = "SELECT * FROM conversations ORDER BY last_message_time DESC LIMIT 150";
+      const res = await db.prepare(fallbackSql).all();
       return res.results || [];
     }
     throw err;
@@ -5213,7 +5200,7 @@ chatRouter.post("/visitor/init", async (c) => {
     const city = cf?.city || "";
     const timezone = cf?.timezone || "";
     const isp = cf?.asOrganization || "";
-    const { conversation } = await getOrCreateConversation(
+    const { conversation, isNew } = await getOrCreateConversation(
       c.env.DB,
       visitor_id,
       visitor_name,
@@ -5222,6 +5209,27 @@ chatRouter.post("/visitor/init", async (c) => {
       { page_context, product_snapshot, device_info }
     );
     const messages = await getMessagesByConversation(c.env.DB, conversation.id, 40);
+    if (isNew && c.env.COORDINATOR) {
+      try {
+        const stub = c.env.COORDINATOR.get(c.env.COORDINATOR.idFromName("global_chat_coordinator"));
+        await stub.fetch(
+          new Request("http://coordinator/broadcast-message", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              conversation_id: conversation.id,
+              id: `sys_init_${conversation.id}`,
+              sender_type: "agent",
+              sender_id: "system",
+              content: conversation.last_message_text || "",
+              message_type: "text",
+              created_at: conversation.created_at || Date.now()
+            })
+          })
+        );
+      } catch {
+      }
+    }
     return c.json({
       success: true,
       data: {
@@ -8152,16 +8160,15 @@ var ChatCoordinator = class {
         if (!msgPayload || !msgPayload.conversation_id || !msgPayload.content) {
           return;
         }
-        const existing = await this.env.DB.prepare(
-          "SELECT id FROM conversations WHERE id = ?"
-        ).bind(msgPayload.conversation_id).first();
-        if (!existing) {
+        const cid = msgPayload.conversation_id;
+        const needsEnsure = !cid || cid.startsWith("pending_") || !await this.env.DB.prepare("SELECT id FROM conversations WHERE id = ?").bind(cid).first();
+        if (needsEnsure) {
           if (msgPayload.sender_type !== "visitor" || !msgPayload.sender_id) {
             try {
               ws.send(
                 JSON.stringify({
                   type: "error",
-                  data: { code: "conversation_not_found", conversation_id: msgPayload.conversation_id }
+                  data: { code: "conversation_not_found", conversation_id: cid }
                 })
               );
             } catch {
@@ -8173,15 +8180,18 @@ var ChatCoordinator = class {
             msgPayload.sender_id,
             msgPayload.sender_name
           );
+          const replaced = conversation.id !== cid;
           msgPayload.conversation_id = conversation.id;
-          try {
-            ws.send(
-              JSON.stringify({
-                type: "session_replaced",
-                data: { conversation, reason: "conversation_missing" }
-              })
-            );
-          } catch {
+          if (replaced) {
+            try {
+              ws.send(
+                JSON.stringify({
+                  type: "session_replaced",
+                  data: { conversation, reason: "conversation_missing" }
+                })
+              );
+            } catch {
+            }
           }
         }
         const savedMsg = await insertMessage(this.env.DB, msgPayload);
