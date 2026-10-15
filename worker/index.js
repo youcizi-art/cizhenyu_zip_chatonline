@@ -8055,6 +8055,7 @@ kbRouter.post("/admin/kb/translate", async (c) => {
 init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
 init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
 init_performance2();
+init_conversations();
 init_kbService();
 init_settings();
 var ChatCoordinator = class {
@@ -8150,6 +8151,38 @@ var ChatCoordinator = class {
         const msgPayload = packet.data;
         if (!msgPayload || !msgPayload.conversation_id || !msgPayload.content) {
           return;
+        }
+        const existing = await this.env.DB.prepare(
+          "SELECT id FROM conversations WHERE id = ?"
+        ).bind(msgPayload.conversation_id).first();
+        if (!existing) {
+          if (msgPayload.sender_type !== "visitor" || !msgPayload.sender_id) {
+            try {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  data: { code: "conversation_not_found", conversation_id: msgPayload.conversation_id }
+                })
+              );
+            } catch {
+            }
+            return;
+          }
+          const { conversation } = await getOrCreateConversation(
+            this.env.DB,
+            msgPayload.sender_id,
+            msgPayload.sender_name
+          );
+          msgPayload.conversation_id = conversation.id;
+          try {
+            ws.send(
+              JSON.stringify({
+                type: "session_replaced",
+                data: { conversation, reason: "conversation_missing" }
+              })
+            );
+          } catch {
+          }
         }
         const savedMsg = await insertMessage(this.env.DB, msgPayload);
         this.broadcastToConversation(savedMsg.conversation_id, {
