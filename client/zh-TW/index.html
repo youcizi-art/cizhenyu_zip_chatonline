@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>磁帧鱼-線上智慧客服 — 基於 Cloudflare 邊緣的輕量全通路客服與客戶營運平台</title>
+  <meta name="description" content="磁帧鱼-線上智慧客服是一套基於 Cloudflare 邊緣雲原生架構（Workers / Durable Objects / D1 / R2 / Workers AI）打造的全通路客戶營運系統：輕量嵌入式線上客服、AI 知識庫秒級回覆、CRM 轉換漏斗與多語系表單。依需建立連線，零伺服器維運成本。" />
+  <meta name="keywords" content="磁帧鱼,線上智慧客服,線上客服系統,AI客服,Cloudflare Workers,Durable Objects,CRM系統,知識庫RAG,獨立站客服,跨境出海,邊緣運算" />
+  <meta name="robots" content="index, follow" />
+  <meta name="author" content="磁帧鱼" />
+  <link rel="canonical" href="https://chat.ycz.me/zh-TW/" />
+  <link rel="alternate" hreflang="zh-CN" href="https://chat.ycz.me/" />
+  <link rel="alternate" hreflang="zh-TW" href="https://chat.ycz.me/zh-TW/" />
+  <link rel="alternate" hreflang="en" href="https://chat.ycz.me/en/" />
+  <link rel="alternate" hreflang="ja" href="https://chat.ycz.me/ja/" />
+  <link rel="alternate" hreflang="x-default" href="https://chat.ycz.me/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:locale" content="zh_TW" />
+  <meta property="og:url" content="https://chat.ycz.me/zh-TW/" />
+  <meta property="og:title" content="磁帧鱼-線上智慧客服 — Cloudflare 邊緣原生客戶營運平台" />
+  <meta property="og:description" content="線上客服 + AI 知識庫 + CRM 銷售漏斗 + 多語系 CMS，100% 運行於 Cloudflare 邊緣。一行腳本嵌入站點，開窗才建連。" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="磁帧鱼-線上智慧客服" />
+  <meta name="twitter:description" content="面向獨立站、跨境出海與現代團隊的線上智慧客服與客戶營運底座，零伺服器維運。" />
+  <link rel="stylesheet" href="/landing.css" />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "SoftwareApplication",
+        "name": "磁帧鱼-線上智慧客服",
+        "applicationCategory": "BusinessApplication",
+        "operatingSystem": "Cloudflare Edge / Modern Browsers",
+        "description": "基於 Cloudflare Workers、Durable Objects、D1、R2 與 Workers AI 的邊緣原生線上客服、CRM、CMS 與知識庫智慧營運平台。",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "featureList": [
+          "嵌入式即時線上客服掛件",
+          "坐席工作台與對話分配",
+          "CRM 客戶檔案與銷售漏斗",
+          "通用表單與 CMS 多語系內容",
+          "企業知識庫 RAG 自動回覆",
+          "開窗才建立 WebSocket 連線"
+        ]
+      },
+      {
+        "@type": "WebSite",
+        "name": "磁帧鱼-線上智慧客服",
+        "url": "https://chat.ycz.me/zh-TW/",
+        "inLanguage": ["zh-TW", "zh-CN", "en", "ja"]
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "磁帧鱼-線上智慧客服 需要自建伺服器嗎？",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "不需要。整套系統 100% 運行於 Cloudflare Workers、Durable Objects、D1、R2、Vectorize 與 Workers AI 上，全球 300+ 節點毫秒級就近接入，無需採購或維護任何傳統雲端主機。"
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "訪客進入網站就會佔用長連線嗎？",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "不會。頁面載入僅毫秒級展示靜態歡迎語與角標；只有訪客主動開啟聊天窗或點擊喚起元素時才建立對話與 WebSocket 連線，嚴格杜絕無效連線消耗。"
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "部署後可以刪除本演示首頁嗎？",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "可以。本頁面專供開發者與交付展示；在正式環境中刪除本頁後訪問根路徑將返回 404，完全不影響線上客服掛件、業務 API 與管理後台的正常運行。"
+            }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-inner">
+      <a class="brand" href="/zh-TW/">
+        <span class="brand-mark">磁</span>
+        <span>磁帧鱼-線上智慧客服</span>
+      </a>
+      <nav class="lang-switch" aria-label="語言">
+        <a href="/">简体</a>
+        <a href="/zh-TW/" aria-current="page">繁體</a>
+        <a href="/en/">EN</a>
+        <a href="/ja/">日本語</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="wrap hero-grid">
+        <div>
+          <p class="eyebrow"><i></i> Cloudflare 邊緣雲原生 · 現代企業客戶營運底座</p>
+          <h1>連接每一次即時溝通，加速每一筆業務轉換</h1>
+          <p class="hero-lead">
+            磁帧鱼-線上智慧客服專為現代企業、跨境出海與獨立站團隊量身定制：整合輕量即時接待、企業級 AI 知識庫（RAG）、客戶畫像 CRM 與多語系獲客表單。依託 Cloudflare 全球邊緣網路，助您以極致低成本實現 7×24 小時全球高速客戶溝通與商機轉換。
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="#embed">查看一行接入</a>
+            <a class="btn btn-ghost" href="#pain">了解核心痛點</a>
+          </div>
+        </div>
+        <aside class="hero-aside" aria-label="技術優勢">
+          <h2>為何選擇邊緣原生架構</h2>
+          <ul class="stack-list">
+            <li>Workers + Durable Objects：依需建連、閒置休眠，徹底消除無效並發帳單</li>
+            <li>D1 + R2：對話記錄與多媒體資源邊緣就近儲存，低延遲高隱私</li>
+            <li>Workers AI + Vectorize：內建企業知識庫 RAG，全天候智慧精準應答</li>
+            <li>一行腳本極速嵌入；動態安全入口 + Turnstile 人機防護杜絕掃描</li>
+          </ul>
+        </aside>
+      </div>
+    </section>
+
+    <section class="block" id="pain">
+      <div class="wrap">
+        <p class="section-kicker">核心痛點</p>
+        <h2 class="section-title">傳統客服與割裂的營運工具，正在侵蝕您的業務利潤</h2>
+        <p class="section-desc">工具碎片化導致數據孤島，昂貴的 SaaS 訂閱與高並發伺服器帳單居高不下，大量潛在客戶在溝通後流失。</p>
+        <div class="pain-grid">
+          <article class="item">
+            <h3>多工具割裂，商機悄然流失</h3>
+            <p>線上客服、CRM 與獲客表單互不相通。銷售線索淹沒在聊天記錄中，人工錄入低效且容易遺漏，錯失黃金跟進時機。</p>
+          </article>
+          <article class="item">
+            <h3>進站即建連，無效成本高昂</h3>
+            <p>市面常見方案在訪客剛進入網頁就建立長連線。日訪問量上升時，大量無意諮詢的連線白白消耗配額，伺服器費用陡增。</p>
+          </article>
+          <article class="item">
+            <h3>維運負擔重，跨國延遲明顯</h3>
+            <p>傳統方案需自行維護 Redis、訊息佇列與主機集群，海外與跨境訪客常遭遇網路連線逾時或訊息卡頓，嚴重影響轉換體驗。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="solution">
+      <div class="wrap">
+        <p class="section-kicker">產品方案</p>
+        <h2 class="section-title">全鏈路一體化：從即時接待到銷售閉環</h2>
+        <p class="section-desc">磁帧鱼將智慧接待、意向挖掘、客戶跟進與知識沉澱整合於單一边緣單元，打造高效流轉的增長閉環。</p>
+        <div class="feature-grid">
+          <article class="item">
+            <h3>依需輕量建連，極速無負擔</h3>
+            <p>進站僅毫秒級展示輕量歡迎語與角標；只有訪客主動開啟聊天窗時才建立 WebSocket。同網域多分頁共享身分，對話無縫同步。</p>
+          </article>
+          <article class="item">
+            <h3>智慧坐席工作台 + CRM 漏斗</h3>
+            <p>全景展示線上客戶、意向標籤與未讀提醒；支援一鍵將諮詢轉入客戶檔案，配合階段漏斗與跟進記錄，讓每次對話皆有沉澱。</p>
+          </article>
+          <article class="item">
+            <h3>AI 知識庫 RAG 自動秒回</h3>
+            <p>基於 Vectorize 向量庫與 Workers AI：坐席離線或夜間諮詢時智慧檢索企業知識庫並專業應答，複雜問題無縫流轉人工。</p>
+          </article>
+          <article class="item">
+            <h3>動態行銷表單 · CMS · 多語系</h3>
+            <p>嵌入式表單靈活收集業務線索，支援多語系產品展示；客服掛件智慧匹配訪客語言環境，後台文案詞條自由拓展。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="trust">
+      <div class="wrap">
+        <p class="section-kicker">安全與可靠</p>
+        <h2 class="section-title">企業級安全設計，保障業務與數據隱私</h2>
+        <p class="section-desc">專為企業獨立交付與正式生產環境打造，從介面防護到隱私合規，層層築牢安全防線。</p>
+        <div class="trust-grid">
+          <article class="item"><h3>動態隱藏後台入口</h3><p>自訂管理路徑，非授權存取 <code>/admin</code> 偽裝返回 404。</p></article>
+          <article class="item"><h3>Turnstile 人機防刷</h3><p>登入介面整合智慧人機驗證與環境變數安全碼，杜絕撞庫破解。</p></article>
+          <article class="item"><h3>媒體資料聯動清理</h3><p>刪除對話時自動級聯清理 R2 儲存媒體檔案並重設訪客身分，隱私合規。</p></article>
+          <article class="item"><h3>完全解耦獨立部署</h3><p>展示首頁可依需要隨時移除，絲毫不影響掛件 SDK 與核心管理業務。</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="how">
+      <div class="wrap">
+        <p class="section-kicker">接入流程</p>
+        <h2 class="section-title">三步輕鬆上線，開啟全球智慧溝通</h2>
+        <div class="steps">
+          <article class="step">
+            <h3>一鍵部署到 Cloudflare</h3>
+            <p>綁定 Workers、D1、R2 與 Durable Objects，按需啟用 Vectorize 向量檢索與 AI 引擎。</p>
+          </article>
+          <article class="step">
+            <h3>個性化配置品牌與策略</h3>
+            <p>自由自訂品牌色系、多語系歡迎詞、客服坐席、安全網域白名單與 AI 知識庫規則。</p>
+          </article>
+          <article class="step">
+            <h3>一行程式碼嵌入目標站點</h3>
+            <p>將掛件腳本注入網站即可開始接待；隨業務規模隨時開啟 CRM、CMS 與表單擴充功能。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="embed">
+      <div class="wrap">
+        <p class="section-kicker">極簡接入</p>
+        <h2 class="section-title">任意站點，一行程式碼輕鬆整合</h2>
+        <p class="section-desc">將範例中的主機位址替換為您的部署網域。推薦配置 <code>__CF_IM_HOST__</code>，確保跨網域嵌入時精準呼叫 API。</p>
+        <pre class="code-panel"><code>&lt;script&gt;window.__CF_IM_HOST__="https://chat.ycz.me";&lt;/script&gt;
+&lt;link rel="stylesheet" href="https://chat.ycz.me/style.css"&gt;
+&lt;script src="https://chat.ycz.me/widget.js" data-cf-chat-sdk defer&gt;&lt;/script&gt;</code></pre>
+        <p class="code-note">右下角即可體驗即時線上客服掛件。本頁面僅供展示參考，正式環境可按需移除。</p>
+      </div>
+    </section>
+
+    <div class="wrap">
+      <section class="cta-band" aria-label="行動號召">
+        <h2>升級全球客戶服務體驗，鎖定高價值銷售商機</h2>
+        <p>從首則訊息的智慧秒級回應，到深度的銷售漏斗跟進與成交沉澱——依託 Cloudflare 全球邊緣網路，告別高昂的伺服器帳單與繁重維運。</p>
+        <a class="btn btn-primary" href="#embed">獲取接入程式碼</a>
+      </section>
+    </div>
+  </main>
+
+  <footer class="wrap site-footer">
+    <p>© 2026 磁帧鱼-線上智慧客服 · 運行於 Cloudflare 全球邊緣網路 · 現代企業級客戶營運底座</p>
+    <p>
+      <a href="/">简体中文</a> ·
+      <a href="/en/">English</a> ·
+      <a href="/ja/">日本語</a>
+    </p>
+  </footer>
+
+  <script>window.__CF_IM_HOST__=window.location.origin;</script>
+  <script src="/widget.js" defer></script>
+</body>
+</html>

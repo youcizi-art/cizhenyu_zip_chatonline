@@ -8504,18 +8504,35 @@ app.get("*", async (c) => {
       });
     }
   }
+  const landingMap = {
+    "/": "/index.html",
+    "/index.html": "/index.html",
+    "/en": "/en/index.html",
+    "/en/": "/en/index.html",
+    "/zh-TW": "/zh-TW/index.html",
+    "/zh-TW/": "/zh-TW/index.html",
+    "/ja": "/ja/index.html",
+    "/ja/": "/ja/index.html"
+  };
+  const landingAsset = landingMap[path];
+  if (landingAsset) {
+    const page = await c.env.ASSETS.fetch(new Request(new URL(landingAsset, url)));
+    if (page.status === 200) {
+      return new Response(page.body, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-cache, no-store, must-revalidate"
+        }
+      });
+    }
+    return c.text("Not found", 404);
+  }
   const assetRes = await c.env.ASSETS.fetch(c.req.raw);
   if (assetRes.status !== 404) {
     return assetRes;
   }
-  const indexPage = await c.env.ASSETS.fetch(new Request(new URL("/index.html", url)));
-  return new Response(indexPage.body, {
-    status: 200,
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "no-cache, no-store, must-revalidate"
-    }
-  });
+  return c.text("Not found", 404);
 });
 var worker_default = app;
 export {

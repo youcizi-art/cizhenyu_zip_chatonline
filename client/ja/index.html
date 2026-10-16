@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>磁帧鱼 — Cloudflare エッジ上のオンラインAIカスタマーサポート＆顧客運営基盤</title>
+  <meta name="description" content="磁帧鱼 は Cloudflare Workers / Durable Objects / D1 / R2 / Workers AI 上で動くエッジネイティブな顧客運営プラットフォームです。軽量な埋め込みライブチャット、AI ナレッジ RAG 自動応答、CRM 営業ファネル、多言語リード獲得フォーム。サーバー運用ゼロ、開いたときだけ接続。" />
+  <meta name="keywords" content="磁帧鱼,オンラインカスタマーサポート,AIチャットボット,Web接客,Cloudflare Workers,Durable Objects,CRM,ナレッジベースRAG,越境EC,エッジコンピューティング" />
+  <meta name="robots" content="index, follow" />
+  <meta name="author" content="磁帧鱼" />
+  <link rel="canonical" href="https://chat.ycz.me/ja/" />
+  <link rel="alternate" hreflang="zh-CN" href="https://chat.ycz.me/" />
+  <link rel="alternate" hreflang="zh-TW" href="https://chat.ycz.me/zh-TW/" />
+  <link rel="alternate" hreflang="en" href="https://chat.ycz.me/en/" />
+  <link rel="alternate" hreflang="ja" href="https://chat.ycz.me/ja/" />
+  <link rel="alternate" hreflang="x-default" href="https://chat.ycz.me/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:locale" content="ja_JP" />
+  <meta property="og:url" content="https://chat.ycz.me/ja/" />
+  <meta property="og:title" content="磁帧鱼 — Cloudflare エッジネイティブ顧客運営プラットフォーム" />
+  <meta property="og:description" content="オンライン接客 + AI ナレッジ + CRM ファネル + 多言語フォーム。Cloudflare エッジで完結。1行埋め込み、オンデマンド接続。" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="磁帧鱼 - オンラインAIカスタマーサポート" />
+  <meta name="twitter:description" content="自社サイト・グローバルEC向けの次世代型Web接客・CRM・AIナレッジ応答プラットフォーム。" />
+  <link rel="stylesheet" href="/landing.css" />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "SoftwareApplication",
+        "name": "磁帧鱼",
+        "applicationCategory": "BusinessApplication",
+        "operatingSystem": "Cloudflare Edge / Modern Browsers",
+        "description": "Cloudflare Workers、Durable Objects、D1、R2、Workers AI を活用したエッジネイティブなオンライン接客・CRM・多言語CMS基盤。",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "featureList": [
+          "埋め込み型リアルタイムチャットウィジェット",
+          "オペレーター受信箱と対応振り分け",
+          "CRM 顧客台帳と商談ファネル",
+          "動的フォームと多言語コンテンツ管理",
+          "企業ナレッジベース RAG 自動応答",
+          "開いたときだけ WebSocket 接続を確立"
+        ]
+      },
+      {
+        "@type": "WebSite",
+        "name": "磁帧鱼",
+        "url": "https://chat.ycz.me/ja/",
+        "inLanguage": ["ja", "zh-CN", "zh-TW", "en"]
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "自社サーバーの契約や構築は必要ですか？",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "いいえ、不要です。磁帧鱼 は 100% Cloudflare Workers、Durable Objects、D1、R2、Vectorize、Workers AI 上で動作するため、従来の仮想サーバーやメッセージキューの調達・保守は一切発生しません。"
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "訪問者がサイトを開くだけで接続コストが発生しますか？",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "いいえ。初期ロードでは軽量なウェルカムバッジと文言のみを取得します。訪問者がチャットウィンドウを開いた時やトリガーをクリックした時のみ WebSocket が確立されるため、不要な接続課金を大幅に削減できます。"
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "導入後にこの LP ページを削除できますか？",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "はい、安全に削除できます。本 LP は開発者・導入検証用のデモページです。本番環境で削除して / が 404 になっても、チャットウィジェット SDK、API、管理画面の動作には影響しません。"
+            }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-inner">
+      <a class="brand" href="/ja/">
+        <span class="brand-mark">磁</span>
+        <span>磁帧鱼 - オンラインAIカスタマーサポート</span>
+      </a>
+      <nav class="lang-switch" aria-label="言語">
+        <a href="/">简体</a>
+        <a href="/zh-TW/">繁體</a>
+        <a href="/en/">EN</a>
+        <a href="/ja/" aria-current="page">日本語</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="wrap hero-grid">
+        <div>
+          <p class="eyebrow"><i></i> Cloudflare エッジネイティブ · 次世代Web接客基盤</p>
+          <h1>すべての対話を商機に変える、エッジネイティブなWeb接客</h1>
+          <p class="hero-lead">
+            磁帧鱼 は、グローバルECや成長企業に向けた次世代型カスタマーサポート＆顧客運営プラットフォームです。リアルタイム接客、AI ナレッジ自動応答（RAG）、CRM 営業ファネル、多言語リード獲得フォームを包括。Cloudflare のエッジ技術により、サーバー運用ゼロ・低遅延・圧倒的な低コスト運用を実現します。
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="#embed">1行の埋め込みを見る</a>
+            <a class="btn btn-ghost" href="#pain">課題と解決策</a>
+          </div>
+        </div>
+        <aside class="hero-aside" aria-label="技術的強み">
+          <h2>なぜエッジアーキテクチャなのか</h2>
+          <ul class="stack-list">
+            <li>Workers + Durable Objects：必要な時だけ接続し休止、アイドル課金を徹底排除</li>
+            <li>D1 + R2：会話履歴・メディアをエッジ近接保存、高速レスポンスと高い安全性</li>
+            <li>Workers AI + Vectorize：社内ナレッジ RAG で24時間365日正確に自動応答</li>
+            <li>スクリプト1行で即時導入；秘匿管理パス + Turnstile ボット防御で高い耐攻撃性</li>
+          </ul>
+        </aside>
+      </div>
+    </section>
+
+    <section class="block" id="pain">
+      <div class="wrap">
+        <p class="section-kicker">導入前の課題</p>
+        <h2 class="section-title">分断されたツールとサーバー費用が、事業の利益を圧迫していませんか？</h2>
+        <p class="section-desc">SaaS の乱立によるデータ孤立、アクセス増加に伴う常時接続コストの高騰、そして対応漏れによる商機損失を解決します。</p>
+        <div class="pain-grid">
+          <article class="item">
+            <h3>ツールの分断とリードの埋没</h3>
+            <p>チャット、CRM、問い合わせフォームがバラバラ。見込み客情報が会話ログに埋もれ、手作業での転記漏れにより貴重な案件を逃します。</p>
+          </article>
+          <article class="item">
+            <h3>無駄な常時接続によるコスト高</h3>
+            <p>多くのチャット製品はサイト訪問と同時に長接続を確立。会話の意思がない大量のアクセスに対しても無駄な接続枠とサーバー費を消費します。</p>
+          </article>
+          <article class="item">
+            <h3>重い運用負荷と海外遅延</h3>
+            <p>Redis やキュー、自前サーバーの保守には継続的な人的コストがかかります。また、遠隔地のサーバー経由では越境訪問者にタイムラグが発生します。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="solution">
+      <div class="wrap">
+        <p class="section-kicker">ソリューション</p>
+        <h2 class="section-title">1つのエッジユニットで、リアルタイム対応から成約まで完結</h2>
+        <p class="section-desc">磁帧鱼 は、リアルタイム接客、AI 自動応答、顧客管理、フォーム連携をひとつにまとめ、運用コストと工数を大幅に削減します。</p>
+        <div class="feature-grid">
+          <article class="item">
+            <h3>開いた時だけオンデマンド接続</h3>
+            <p>ページ読み込み時はミリ秒単位で静的バッジのみを表示。訪問者がチャットを開いて初めて WebSocket を確立します。同一ドメイン内はタブ間同期に対応。</p>
+          </article>
+          <article class="item">
+            <h3>オペレーター管理画面 ＋ CRM</h3>
+            <p>リアルタイム訪問者一覧、見込み度タグ、未読通知、ワンクリックで顧客台帳へ登録。パイプライン管理でチャットを確実な商談へ昇華させます。</p>
+          </article>
+          <article class="item">
+            <h3>AI ナレッジ RAG による自動即答</h3>
+            <p>Vectorize ＋ Workers AI を搭載。夜間やオペレーター不在時も自社ナレッジから高精度に自動回答し、必要に応じて有人対応へスムーズに引き継ぎます。</p>
+          </article>
+          <article class="item">
+            <h3>動的リードフォーム · CMS · 多言語</h3>
+            <p>LP に埋め込める問い合わせフォームや多言語コンテンツ管理。チャットウィジェットは訪問者の言語環境を自動認識しスムーズに対応します。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="trust">
+      <div class="wrap">
+        <p class="section-kicker">信頼性と安全性</p>
+        <h2 class="section-title">本番運用とマルチテナント導入を見据えた堅牢なセキュリティ</h2>
+        <p class="section-desc">不正探索の遮断からデータプライバシー保護まで、エンタープライズ水準の安全設計を標準装備しています。</p>
+        <div class="trust-grid">
+          <article class="item"><h3>管理画面パスの秘匿</h3><p>カスタム URL に対応し、未認証の <code>/admin</code> アクセスは 404 に偽装。</p></article>
+          <article class="item"><h3>Turnstile 人機認証</h3><p>ログイン画面に Cloudflare ボット対策と環境セキュリティコードを多層適用。</p></article>
+          <article class="item"><h3>メディア完全削除の連動</h3><p>会話削除時に R2 上の画像・動画も一括パージし、訪問者 ID をリセット。</p></article>
+          <article class="item"><h3>完全分離・削除可能なデモ LP</h3><p>本デモページを削除しても、チャットウィジェットやバックエンド API は影響を受けません。</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="how">
+      <div class="wrap">
+        <p class="section-kicker">導入の流れ</p>
+        <h2 class="section-title">わずか 3 ステップで Web 接客を開始</h2>
+        <div class="steps">
+          <article class="step">
+            <h3>Cloudflare へデプロイ</h3>
+            <p>Workers、D1、R2、Durable Objects を接続。必要に応じて Vectorize や AI 機能を有効化。</p>
+          </article>
+          <article class="step">
+            <h3>ブランドと応答ポリシー設定</h3>
+            <p>ブランドカラー、多言語ウェルカムメッセージ、担当者アカウント、AI ナレッジを設定。</p>
+          </article>
+          <article class="step">
+            <h3>コード 1 行をサイトへ埋め込み</h3>
+            <p>Web サイトにスクリプトを追加するだけで、即座に次世代のオンラインサポートを開始できます。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="embed">
+      <div class="wrap">
+        <p class="section-kicker">かんたん導入</p>
+        <h2 class="section-title">どんなサイトでも、スクリプト 1 行で完了</h2>
+        <p class="section-desc">ホスト部分をご自身の Worker ドメインに書き換えてください。クロスオリジン埋め込み時は <code>__CF_IM_HOST__</code> を指定します。</p>
+        <pre class="code-panel"><code>&lt;script&gt;window.__CF_IM_HOST__="https://chat.ycz.me";&lt;/script&gt;
+&lt;link rel="stylesheet" href="https://chat.ycz.me/style.css"&gt;
+&lt;script src="https://chat.ycz.me/widget.js" data-cf-chat-sdk defer&gt;&lt;/script&gt;</code></pre>
+        <p class="code-note">画面右下で実際のウィジェットを体験できます。本 LP は検証用のため本番稼働時に削除可能です。</p>
+      </div>
+    </section>
+
+    <div class="wrap">
+      <section class="cta-band" aria-label="行動喚起">
+        <h2>世界中の顧客との接点を強化し、成約率を最大化</h2>
+        <p>最初のメッセージへの瞬時な自動応答から、CRM を活用した確実な商談化まで——Cloudflare エッジで実現する新しい顧客運営を始めましょう。</p>
+        <a class="btn btn-primary" href="#embed">埋め込みコードを取得</a>
+      </section>
+    </div>
+  </main>
+
+  <footer class="wrap site-footer">
+    <p>© 2026 磁帧鱼 · Cloudflare エッジ上で稼働 · 次世代顧客運営プラットフォーム</p>
+    <p>
+      <a href="/">简体中文</a> ·
+      <a href="/zh-TW/">繁體中文</a> ·
+      <a href="/en/">English</a>
+    </p>
+  </footer>
+
+  <script>window.__CF_IM_HOST__=window.location.origin;</script>
+  <script src="/widget.js" defer></script>
+</body>
+</html>
