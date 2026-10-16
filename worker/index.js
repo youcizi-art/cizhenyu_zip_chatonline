@@ -2434,6 +2434,59 @@ ${searchResults[0].chunk.content}` : "\u60A8\u597D\uFF01\u4EBA\u5DE5\u5BA2\u670D
     };
   }
 }
+function extractJsonObject(raw2) {
+  if (!raw2 || !raw2.trim())
+    return null;
+  let text = raw2.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end <= start)
+    return null;
+  text = text.substring(start, end + 1);
+  const tryParse = /* @__PURE__ */ __name((s) => {
+    try {
+      const v = JSON.parse(s);
+      if (v && typeof v === "object" && !Array.isArray(v))
+        return v;
+    } catch {
+    }
+    return null;
+  }, "tryParse");
+  let parsed = tryParse(text);
+  if (parsed)
+    return parsed;
+  parsed = tryParse(text.replace(/,\s*([}\]])/g, "$1"));
+  if (parsed)
+    return parsed;
+  const recovered = {};
+  const pairRe = /"([^"\\]+)"\s*:\s*"((?:\\.|[^"\\])*)"/g;
+  let m;
+  while ((m = pairRe.exec(text)) !== null) {
+    try {
+      recovered[m[1]] = JSON.parse(`"${m[2]}"`);
+    } catch {
+      recovered[m[1]] = m[2];
+    }
+  }
+  return Object.keys(recovered).length > 0 ? recovered : null;
+}
+function preferTranslatePool(pool) {
+  const enabled = pool.filter((c) => c.enabled !== false);
+  const list = enabled.length > 0 ? enabled : pool;
+  const score = /* @__PURE__ */ __name((ch) => {
+    const m = (ch.model || "").toLowerCase();
+    if (m.includes("70b") || m.includes("72b"))
+      return 0;
+    if (m.includes("32b") || m.includes("r1"))
+      return 1;
+    if (m.includes("8b") || m.includes("14b"))
+      return 2;
+    if (m.includes("3b") || m.includes("1b"))
+      return 4;
+    return 3;
+  }, "score");
+  return [...list].sort((a, b) => score(a) - score(b));
+}
 async function translateContentWithAi(env2, params) {
   const { sourceLang, targetLangs, fields, langLabels = {} } = params;
   if (!targetLangs || targetLangs.length === 0 || !fields || Object.keys(fields).length === 0) {
@@ -2449,6 +2502,7 @@ async function translateContentWithAi(env2, params) {
     }
   } catch (e) {
   }
+  modelPool = preferTranslatePool(modelPool);
   const labelOf = /* @__PURE__ */ __name((code) => {
     const name = (langLabels[code] || "").trim();
     return name ? `${name} (${code})` : code;
@@ -2457,48 +2511,48 @@ async function translateContentWithAi(env2, params) {
   const results = {};
   let lastUsedChannel = "unknown";
   const sourceLabel = labelOf(sourceLang);
+  const fieldKeys = Object.keys(fields);
   for (const targetLang of targetLangs) {
     if (targetLang === sourceLang)
       continue;
     const targetLabel = labelOf(targetLang);
-    const prompt = `\u4F60\u662F\u4E00\u4E2A\u591A\u8BED\u8A00\u672C\u5730\u5316\u7FFB\u8BD1\u5F15\u64CE\u3002
-\u8BF7\u5C06\u4EE5\u4E0B JSON \u4E2D\u6BCF\u4E2A\u5B57\u6BB5\u7684\u300C\u503C\u300D\u4ECE\u6E90\u8BED\u8A00\u3010${sourceLabel}\u3011\u7FFB\u8BD1\u4E3A\u76EE\u6807\u8BED\u8A00\u3010${targetLabel}\u3011\u3002
-\u8BF4\u660E\uFF1AJSON \u7684 Key \u662F\u5B57\u6BB5\u6807\u8BC6\uFF0C\u4E0D\u8981\u7FFB\u8BD1 Key\uFF1B\u53EA\u7FFB\u8BD1\u6BCF\u4E2A Key \u5BF9\u5E94\u7684\u6587\u672C\u5185\u5BB9\u3002
-\u89C4\u5219\u8981\u6C42\uFF1A
-1. \u8BD1\u6587\u4F7F\u7528\u76EE\u6807\u8BED\u8A00\u3010${targetLabel}\u3011\uFF0C\u81EA\u7136\u3001\u51C6\u786E\u3001\u7B26\u5408\u5F53\u5730\u4E60\u60EF\uFF1B
-2. \u82E5\u6587\u672C\u5305\u542B HTML \u6807\u7B7E\uFF0C\u5FC5\u987B\u4FDD\u7559\u5168\u90E8\u6807\u7B7E\u4E0E\u5C5E\u6027\uFF0C\u4EC5\u7FFB\u8BD1\u6807\u7B7E\u4E4B\u95F4\u7684\u53EF\u8BFB\u6587\u5B57\uFF1B
-3. \u8F93\u51FA\u5FC5\u987B\u662F\u5408\u6CD5\u7EAF\u51C0 JSON\uFF0CKey \u4E0E\u8F93\u5165\u5B8C\u5168\u4E00\u81F4\uFF0C\u4E0D\u8981 markdown \u6216\u989D\u5916\u8BF4\u660E\u3002
+    const prompt = `Translate ONLY the JSON values from ${sourceLabel} to ${targetLabel}.
+Keep every key unchanged. Preserve HTML tags/attributes; translate visible text only.
+Output ONE raw JSON object. No markdown. No explanation.
 
-\u5F85\u7FFB\u8BD1 JSON \u6570\u636E\uFF1A
-${JSON.stringify(fields, null, 2)}`;
+Input:
+${JSON.stringify(fields)}`;
     const messages = [
       {
         role: "system",
-        content: `You are a professional localization engine. Translate field values into ${targetLabel}. Reply with raw JSON only.`
+        content: `Output valid JSON only. Keys: ${fieldKeys.join(", ")}. Target language: ${targetLabel}.`
       },
       { role: "user", content: prompt }
     ];
     try {
       const { text, channelName } = await callLlmWithFallback(env2, messages, modelPool);
       lastUsedChannel = channelName;
-      const cleaned = text.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
-      const jsonStart = cleaned.indexOf("{");
-      const jsonEnd = cleaned.lastIndexOf("}");
-      if (jsonStart === -1 || jsonEnd === -1) {
+      const parsed = extractJsonObject(text);
+      if (!parsed) {
         results[targetLang] = { ok: false, error: "\u6A21\u578B\u672A\u8FD4\u56DE\u5408\u6CD5 JSON" };
         continue;
       }
-      const parsed = JSON.parse(cleaned.substring(jsonStart, jsonEnd + 1));
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        results[targetLang] = { ok: false, error: "\u6A21\u578B\u8FD4\u56DE\u7ED3\u6784\u65E0\u6548" };
-        continue;
+      const normalized = {};
+      let hasValue = false;
+      for (const k of fieldKeys) {
+        const v = parsed[k];
+        if (typeof v === "string" && v.trim() !== "") {
+          normalized[k] = v;
+          hasValue = true;
+        } else if (typeof fields[k] === "string") {
+          normalized[k] = fields[k];
+        }
       }
-      const hasValue = Object.keys(fields).some((k) => typeof parsed[k] === "string" && parsed[k].trim() !== "");
       if (!hasValue) {
         results[targetLang] = { ok: false, error: "\u8BD1\u6587\u4E3A\u7A7A" };
         continue;
       }
-      translations[targetLang] = parsed;
+      translations[targetLang] = normalized;
       results[targetLang] = { ok: true };
     } catch (err) {
       console.error(`AI translation failed for ${targetLang}:`, err);
@@ -2554,6 +2608,8 @@ var init_kbService = __esm({
     __name(testAiChannel, "testAiChannel");
     __name(callLlmWithFallback, "callLlmWithFallback");
     __name(askKnowledge, "askKnowledge");
+    __name(extractJsonObject, "extractJsonObject");
+    __name(preferTranslatePool, "preferTranslatePool");
     __name(translateContentWithAi, "translateContentWithAi");
   }
 });
@@ -8181,6 +8237,10 @@ var ChatCoordinator = class {
           data: savedMsg
         });
         this.broadcastToAgents({
+          type: "message",
+          data: savedMsg
+        });
+        this.broadcastToAgents({
           type: "conversation_update",
           data: {
             conversation_id: savedMsg.conversation_id,
@@ -8295,6 +8355,10 @@ var ChatCoordinator = class {
           data: savedMsg
         });
         this.broadcastToAgents({
+          type: "message",
+          data: savedMsg
+        });
+        this.broadcastToAgents({
           type: "conversation_update",
           data: {
             conversation_id: savedMsg.conversation_id,
@@ -8346,6 +8410,10 @@ var ChatCoordinator = class {
                   };
                   const savedAiMsg = await insertMessage(this.env.DB, aiMsgPayload);
                   this.broadcastToConversation(savedAiMsg.conversation_id, {
+                    type: "message",
+                    data: savedAiMsg
+                  });
+                  this.broadcastToAgents({
                     type: "message",
                     data: savedAiMsg
                   });
