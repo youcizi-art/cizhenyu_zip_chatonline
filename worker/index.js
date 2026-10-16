@@ -1287,6 +1287,7 @@ var init_langSettings = __esm({
 var conversations_exports = {};
 __export(conversations_exports, {
   batchCleanupConversations: () => batchCleanupConversations,
+  countConversationMedia: () => countConversationMedia,
   deleteConversation: () => deleteConversation,
   deleteConversationMediaFromR2: () => deleteConversationMediaFromR2,
   getConversations: () => getConversations,
@@ -1294,6 +1295,7 @@ __export(conversations_exports, {
   getOrCreateWhatsAppConversation: () => getOrCreateWhatsAppConversation,
   getVisitorJourneyLogs: () => getVisitorJourneyLogs,
   insertWhatsAppMessage: () => insertWhatsAppMessage,
+  listConversationMediaKeys: () => listConversationMediaKeys,
   updateConversationContext: () => updateConversationContext,
   updateConversationTag: () => updateConversationTag
 });
@@ -1567,50 +1569,76 @@ async function insertWhatsAppMessage(db, conversationId, senderId, senderName, c
     WHERE id = ?
   `).bind(content.slice(0, 80), now, conversationId).run();
 }
-async function deleteConversationMediaFromR2(db, bucket, conversationId) {
-  if (!bucket)
-    return;
+async function countConversationMedia(db, conversationId) {
+  try {
+    const row = await db.prepare(
+      "SELECT COUNT(*) as count FROM messages WHERE conversation_id = ? AND message_type IN ('image', 'audio', 'file', 'video')"
+    ).bind(conversationId).first();
+    return row?.count || 0;
+  } catch {
+    return 0;
+  }
+}
+async function listConversationMediaKeys(db, conversationId) {
   try {
     const res = await db.prepare(
       "SELECT content FROM messages WHERE conversation_id = ? AND message_type IN ('image', 'audio', 'file', 'video')"
     ).bind(conversationId).all();
-    if (!res.results || res.results.length === 0)
-      return;
-    const keysToDelete = [];
-    for (const row of res.results) {
+    const keys = [];
+    for (const row of res.results || []) {
       if (!row.content)
         continue;
       const idx = row.content.indexOf("/media/");
-      if (idx !== -1) {
-        const fileKey = row.content.substring(idx + "/media/".length).trim();
-        if (fileKey) {
-          keysToDelete.push(fileKey);
-        }
-      }
+      if (idx === -1)
+        continue;
+      const fileKey = row.content.substring(idx + "/media/".length).trim();
+      if (fileKey)
+        keys.push(fileKey);
     }
-    if (keysToDelete.length > 0) {
-      await Promise.allSettled(keysToDelete.map((k) => bucket.delete(k)));
-    }
+    return keys;
+  } catch {
+    return [];
+  }
+}
+async function deleteConversationMediaFromR2(db, bucket, conversationId, prefetchedKeys) {
+  if (!bucket)
+    return 0;
+  try {
+    const keysToDelete = prefetchedKeys ?? await listConversationMediaKeys(db, conversationId);
+    if (keysToDelete.length === 0)
+      return 0;
+    await Promise.allSettled(keysToDelete.map((k) => bucket.delete(k)));
+    return keysToDelete.length;
   } catch (err) {
     console.error("Failed to cleanup R2 media for conversation", conversationId, err);
+    return 0;
   }
 }
 async function deleteConversation(db, conversationId, bucket) {
-  await db.prepare("DELETE FROM messages WHERE conversation_id = ?").bind(conversationId).run();
-  await db.prepare("DELETE FROM conversations WHERE id = ?").bind(conversationId).run();
-  if (conversationId.startsWith("sec_")) {
-    await db.prepare("DELETE FROM private_chats WHERE id = ?").bind(conversationId).run();
-  }
-  if (bucket) {
+  const conv = await db.prepare("SELECT visitor_id FROM conversations WHERE id = ?").bind(conversationId).first();
+  const visitorId = conv?.visitor_id || null;
+  const mediaKeys = await listConversationMediaKeys(db, conversationId);
+  const mediaCount = mediaKeys.length;
+  if (bucket && mediaKeys.length > 0) {
     try {
       await Promise.race([
-        deleteConversationMediaFromR2(db, bucket, conversationId),
-        new Promise((resolve) => setTimeout(resolve, 2e3))
+        deleteConversationMediaFromR2(db, bucket, conversationId, mediaKeys),
+        new Promise((resolve) => setTimeout(resolve, 8e3))
       ]);
     } catch (err) {
       console.warn("R2 media cleanup skipped or timed out", err);
     }
   }
+  await db.prepare("DELETE FROM messages WHERE conversation_id = ?").bind(conversationId).run();
+  try {
+    await db.prepare("DELETE FROM visitor_journey_logs WHERE conversation_id = ?").bind(conversationId).run();
+  } catch {
+  }
+  await db.prepare("DELETE FROM conversations WHERE id = ?").bind(conversationId).run();
+  if (conversationId.startsWith("sec_")) {
+    await db.prepare("DELETE FROM private_chats WHERE id = ?").bind(conversationId).run();
+  }
+  return { mediaCount, visitorId };
 }
 async function updateConversationTag(db, conversationId, tag) {
   try {
@@ -1676,6 +1704,8 @@ var init_conversations = __esm({
     __name(getConversations, "getConversations");
     __name(getOrCreateWhatsAppConversation, "getOrCreateWhatsAppConversation");
     __name(insertWhatsAppMessage, "insertWhatsAppMessage");
+    __name(countConversationMedia, "countConversationMedia");
+    __name(listConversationMediaKeys, "listConversationMediaKeys");
     __name(deleteConversationMediaFromR2, "deleteConversationMediaFromR2");
     __name(deleteConversation, "deleteConversation");
     __name(updateConversationTag, "updateConversationTag");
@@ -5190,9 +5220,26 @@ chatRouter.post("/visitor/init", async (c) => {
   try {
     await ensureDefaultAdmin(c.env.DB);
     const body = await c.req.json();
-    const { visitor_id, visitor_name, visitor_lang, page_context, product_snapshot, device_info } = body;
+    const {
+      visitor_id,
+      visitor_name,
+      visitor_lang,
+      conversation_id,
+      page_context,
+      product_snapshot,
+      device_info
+    } = body;
     if (!visitor_id) {
       return c.json({ success: false, message: "\u7F3A\u5C11\u8BBF\u5BA2\u552F\u4E00\u6807\u8BC6" }, 400);
+    }
+    if (conversation_id) {
+      const stillThere = await c.env.DB.prepare("SELECT id FROM conversations WHERE id = ?").bind(conversation_id).first();
+      if (!stillThere) {
+        return c.json({
+          success: true,
+          data: { reset_identity: true, reason: "conversation_deleted" }
+        });
+      }
     }
     const ip = c.req.header("cf-connecting-ip") || c.req.header("x-real-ip") || "";
     const cf = c.req.raw?.cf;
@@ -5234,7 +5281,8 @@ chatRouter.post("/visitor/init", async (c) => {
       success: true,
       data: {
         conversation,
-        messages
+        messages,
+        isNew
       }
     });
   } catch (err) {
@@ -5303,6 +5351,15 @@ chatRouter.post("/conversations/:id/read", async (c) => {
   }
   return c.json({ success: true });
 });
+chatRouter.get("/conversations/:id/media-count", async (c) => {
+  try {
+    const convId = c.req.param("id");
+    const count3 = await countConversationMedia(c.env.DB, convId);
+    return c.json({ success: true, data: { count: count3 } });
+  } catch (err) {
+    return c.json({ success: false, message: err.message }, 500);
+  }
+});
 chatRouter.delete("/conversations/:id", async (c) => {
   try {
     const convId = c.req.param("id");
@@ -5314,8 +5371,27 @@ chatRouter.delete("/conversations/:id", async (c) => {
         return c.json({ success: false, message: "\u6743\u9650\u4E0D\u8DB3\uFF1A\u4EC5\u8D85\u7EA7\u7BA1\u7406\u5458\u53EF\u4EE5\u5F7B\u5E95\u5220\u9664\u804A\u5929\u8BB0\u5F55" }, 403);
       }
     }
-    await deleteConversation(c.env.DB, convId, c.env.MEDIA_BUCKET);
-    return c.json({ success: true });
+    if (c.env.COORDINATOR) {
+      try {
+        const stub = c.env.COORDINATOR.get(c.env.COORDINATOR.idFromName("global_chat_coordinator"));
+        await stub.fetch(
+          new Request("http://coordinator/broadcast-deleted", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              conversation_id: convId,
+              clear_identity: true
+            })
+          })
+        );
+      } catch {
+      }
+    }
+    const result = await deleteConversation(c.env.DB, convId, c.env.MEDIA_BUCKET);
+    return c.json({
+      success: true,
+      data: { mediaCount: result.mediaCount, visitorId: result.visitorId }
+    });
   } catch (err) {
     return c.json({ success: false, message: err.message }, 500);
   }
@@ -8111,6 +8187,25 @@ var ChatCoordinator = class {
             last_message: savedMsg
           }
         });
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { "Content-Type": "application/json" }
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500 });
+      }
+    }
+    if (url.pathname === "/broadcast-deleted" && request.method === "POST") {
+      try {
+        const body = await request.json();
+        if (body.conversation_id) {
+          this.broadcastToConversation(body.conversation_id, {
+            type: "conversation_deleted",
+            data: {
+              conversation_id: body.conversation_id,
+              clear_identity: body.clear_identity !== false
+            }
+          });
+        }
         return new Response(JSON.stringify({ success: true }), {
           headers: { "Content-Type": "application/json" }
         });
