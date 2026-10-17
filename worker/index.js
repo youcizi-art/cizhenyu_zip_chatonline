@@ -6628,6 +6628,44 @@ init_performance2();
 init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
 init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
 init_performance2();
+
+// src/shared/formI18n.ts
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+init_performance2();
+function pickLocaleBundle(map, lang, defaultLang) {
+  if (!map || typeof map !== "object")
+    return null;
+  const norm = /* @__PURE__ */ __name((c) => c.toLowerCase().replace(/_/g, "-"), "norm");
+  const want = norm(lang);
+  if (map[lang])
+    return map[lang];
+  const hit = Object.entries(map).find(([k]) => norm(k) === want);
+  if (hit)
+    return hit[1];
+  if (defaultLang && map[defaultLang])
+    return map[defaultLang];
+  if (map.en)
+    return map.en;
+  if (map["en-US"])
+    return map["en-US"];
+  if (map["zh-CN"])
+    return map["zh-CN"];
+  const first = Object.values(map)[0];
+  return first || null;
+}
+__name(pickLocaleBundle, "pickLocaleBundle");
+function emptyFormLocaleBundle() {
+  return { title: "", description: "", button_text: "", success_message: "", fields: {} };
+}
+__name(emptyFormLocaleBundle, "emptyFormLocaleBundle");
+function displayFormTitle(form, defaultLang) {
+  const bundle = pickLocaleBundle(form.translations_json, defaultLang || "zh-CN", defaultLang);
+  return bundle?.title?.trim() || form.key || "\u672A\u547D\u540D\u8868\u5355";
+}
+__name(displayFormTitle, "displayFormTitle");
+
+// src/worker/db/forms.ts
 async function ensureFormTables(db) {
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS custom_forms (
@@ -6638,11 +6676,16 @@ async function ensureFormTables(db) {
       allowed_domains TEXT,
       fields_json TEXT NOT NULL,
       style_config_json TEXT,
+      translations_json TEXT,
       status TEXT DEFAULT 'active',
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     )
   `).run();
+  try {
+    await db.prepare("ALTER TABLE custom_forms ADD COLUMN translations_json TEXT").run();
+  } catch {
+  }
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS form_submissions (
       id TEXT PRIMARY KEY,
@@ -6660,52 +6703,79 @@ async function ensureFormTables(db) {
   try {
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_custom_forms_key ON custom_forms(key)").run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_form_subs_key ON form_submissions(form_key)").run();
-  } catch (e) {
+  } catch {
   }
 }
 __name(ensureFormTables, "ensureFormTables");
+var DEFAULT_STYLE = {
+  primary_color: "#07c160",
+  bg_color: "white",
+  border_radius: 5,
+  size: "medium"
+};
+function rowToForm(r, submissionsCount = 0) {
+  let fields = [];
+  let style = { ...DEFAULT_STYLE };
+  let translations = {};
+  try {
+    fields = JSON.parse(r.fields_json || "[]");
+  } catch {
+    fields = [];
+  }
+  try {
+    if (r.style_config_json) {
+      const parsed = JSON.parse(r.style_config_json);
+      style = {
+        primary_color: parsed.primary_color || DEFAULT_STYLE.primary_color,
+        bg_color: parsed.bg_color || "white",
+        border_radius: typeof parsed.border_radius === "number" ? parsed.border_radius : 5,
+        size: parsed.size || "medium"
+      };
+    }
+  } catch {
+  }
+  try {
+    if (r.translations_json)
+      translations = JSON.parse(r.translations_json);
+  } catch {
+    translations = {};
+  }
+  if (!translations || Object.keys(translations).length === 0) {
+    translations = {
+      "zh-CN": {
+        ...emptyFormLocaleBundle(),
+        title: r.title || "",
+        description: r.description || ""
+      }
+    };
+  }
+  return {
+    id: r.id,
+    key: r.key,
+    allowed_domains: r.allowed_domains || "",
+    fields,
+    translations_json: translations,
+    style,
+    status: r.status || "active",
+    submissions_count: submissionsCount,
+    created_at: r.created_at,
+    updated_at: r.updated_at
+  };
+}
+__name(rowToForm, "rowToForm");
+function listTitle(translations, fallbackKey) {
+  return displayFormTitle({ translations_json: translations, key: fallbackKey }, "zh-CN");
+}
+__name(listTitle, "listTitle");
 async function getAllCustomForms(db) {
   await ensureFormTables(db);
-  const rows = await db.prepare(
-    "SELECT * FROM custom_forms ORDER BY created_at DESC"
-  ).all();
+  const rows = await db.prepare("SELECT * FROM custom_forms ORDER BY created_at DESC").all();
   if (!rows.results)
     return [];
   const forms = [];
   for (const r of rows.results) {
-    const countRow = await db.prepare(
-      "SELECT COUNT(id) as count FROM form_submissions WHERE form_key = ?"
-    ).bind(r.key).first();
-    let fields = [];
-    let style = {
-      primary_color: "#07c160",
-      bg_color: "white",
-      border_radius: "medium",
-      button_text: "\u7ACB\u5373\u63D0\u4EA4",
-      success_message: "\u611F\u8C22\u60A8\u7684\u63D0\u4EA4\uFF0C\u6211\u4EEC\u5DF2\u6536\u5230\u60A8\u7684\u7B54\u5377\uFF01"
-    };
-    try {
-      fields = JSON.parse(r.fields_json);
-    } catch (e) {
-    }
-    try {
-      if (r.style_config_json)
-        style = JSON.parse(r.style_config_json);
-    } catch (e) {
-    }
-    forms.push({
-      id: r.id,
-      key: r.key,
-      title: r.title,
-      description: r.description || "",
-      allowed_domains: r.allowed_domains || "",
-      fields,
-      style,
-      status: r.status || "active",
-      submissions_count: countRow?.count || 0,
-      created_at: r.created_at,
-      updated_at: r.updated_at
-    });
+    const countRow = await db.prepare("SELECT COUNT(id) as count FROM form_submissions WHERE form_key = ?").bind(r.key).first();
+    forms.push(rowToForm(r, countRow?.count || 0));
   }
   return forms;
 }
@@ -6715,54 +6785,28 @@ async function getCustomFormByKey(db, key) {
   const r = await db.prepare("SELECT * FROM custom_forms WHERE key = ?").bind(key).first();
   if (!r)
     return null;
-  let fields = [];
-  let style = {
-    primary_color: "#07c160",
-    bg_color: "white",
-    border_radius: "medium",
-    button_text: "\u7ACB\u5373\u63D0\u4EA4",
-    success_message: "\u611F\u8C22\u60A8\u7684\u63D0\u4EA4\uFF0C\u6211\u4EEC\u5DF2\u6536\u5230\u60A8\u7684\u7B54\u5377\uFF01"
-  };
-  try {
-    fields = JSON.parse(r.fields_json);
-  } catch (e) {
-  }
-  try {
-    if (r.style_config_json)
-      style = JSON.parse(r.style_config_json);
-  } catch (e) {
-  }
-  return {
-    id: r.id,
-    key: r.key,
-    title: r.title,
-    description: r.description || "",
-    allowed_domains: r.allowed_domains || "",
-    fields,
-    style,
-    status: r.status || "active",
-    created_at: r.created_at,
-    updated_at: r.updated_at
-  };
+  return rowToForm(r);
 }
 __name(getCustomFormByKey, "getCustomFormByKey");
 async function createCustomForm(db, data) {
   await ensureFormTables(db);
   const id = `form_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 4)}`;
   const now = Date.now();
+  const title2 = listTitle(data.translations_json, data.key);
   await db.prepare(`
     INSERT INTO custom_forms (
       id, key, title, description, allowed_domains,
-      fields_json, style_config_json, status, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+      fields_json, style_config_json, translations_json, status, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
   `).bind(
     id,
     data.key,
-    data.title,
-    data.description || "",
+    title2,
+    "",
     data.allowed_domains || "",
-    JSON.stringify(data.fields),
-    JSON.stringify(data.style),
+    JSON.stringify(data.fields || []),
+    JSON.stringify(data.style || DEFAULT_STYLE),
+    JSON.stringify(data.translations_json || {}),
     now,
     now
   ).run();
@@ -6772,6 +6816,7 @@ __name(createCustomForm, "createCustomForm");
 async function updateCustomForm(db, id, data) {
   await ensureFormTables(db);
   const now = Date.now();
+  const title2 = listTitle(data.translations_json, id);
   await db.prepare(`
     UPDATE custom_forms SET
       title = ?,
@@ -6779,14 +6824,16 @@ async function updateCustomForm(db, id, data) {
       allowed_domains = ?,
       fields_json = ?,
       style_config_json = ?,
+      translations_json = ?,
       updated_at = ?
     WHERE id = ?
   `).bind(
-    data.title,
-    data.description || "",
+    title2,
+    "",
     data.allowed_domains || "",
-    JSON.stringify(data.fields),
-    JSON.stringify(data.style),
+    JSON.stringify(data.fields || []),
+    JSON.stringify(data.style || DEFAULT_STYLE),
+    JSON.stringify(data.translations_json || {}),
     now,
     id
   ).run();
@@ -6803,16 +6850,15 @@ async function deleteCustomForm(db, id) {
 __name(deleteCustomForm, "deleteCustomForm");
 async function getFormSubmissions(db, formKey) {
   await ensureFormTables(db);
-  const rows = await db.prepare(
-    "SELECT * FROM form_submissions WHERE form_key = ? ORDER BY created_at DESC LIMIT 500"
-  ).bind(formKey).all();
+  const rows = await db.prepare("SELECT * FROM form_submissions WHERE form_key = ? ORDER BY created_at DESC LIMIT 500").bind(formKey).all();
   if (!rows.results)
     return [];
   return rows.results.map((r) => {
     let data = {};
     try {
       data = JSON.parse(r.data_json);
-    } catch (e) {
+    } catch {
+      data = {};
     }
     return {
       id: r.id,
@@ -6887,9 +6933,18 @@ formsRouter.get("/admin/forms", async (c) => {
 formsRouter.post("/admin/forms", async (c) => {
   try {
     const body = await c.req.json();
-    const { key, title: title2, description, allowed_domains, fields, style } = body;
-    if (!key || !title2) {
-      return c.json({ success: false, message: "\u8868\u5355\u540D\u79F0\u4E0E\u8C03\u7528 Key \u4E3A\u5FC5\u586B\u9879" }, 400);
+    const { key, allowed_domains, fields, style, translations_json } = body;
+    if (!key) {
+      return c.json({ success: false, message: "\u8868\u5355\u8C03\u7528 Key \u4E3A\u5FC5\u586B\u9879" }, 400);
+    }
+    if (!translations_json || typeof translations_json !== "object") {
+      return c.json({ success: false, message: "\u8BF7\u63D0\u4F9B\u591A\u8BED\u8A00\u6587\u6848 translations_json" }, 400);
+    }
+    const hasTitle = Object.values(translations_json).some(
+      (b) => b?.title && String(b.title).trim()
+    );
+    if (!hasTitle) {
+      return c.json({ success: false, message: "\u8BF7\u81F3\u5C11\u586B\u5199\u4E00\u79CD\u8BED\u8A00\u7684\u8868\u5355\u6807\u9898" }, 400);
     }
     const cleanedKey = key.trim().toLowerCase().replace(/[^a-z0-9_]/g, "_");
     const existing = await getCustomFormByKey(c.env.DB, cleanedKey);
@@ -6898,11 +6953,10 @@ formsRouter.post("/admin/forms", async (c) => {
     }
     const created = await createCustomForm(c.env.DB, {
       key: cleanedKey,
-      title: title2.trim(),
-      description,
       allowed_domains,
       fields: fields || [],
-      style: style || {}
+      style: style || {},
+      translations_json
     });
     return c.json({ success: true, data: created });
   } catch (err) {
@@ -6913,16 +6967,21 @@ formsRouter.put("/admin/forms/:id", async (c) => {
   try {
     const id = c.req.param("id");
     const body = await c.req.json();
-    const { title: title2, description, allowed_domains, fields, style } = body;
-    if (!title2) {
-      return c.json({ success: false, message: "\u8868\u5355\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A" }, 400);
+    const { allowed_domains, fields, style, translations_json } = body;
+    if (!translations_json || typeof translations_json !== "object") {
+      return c.json({ success: false, message: "\u8BF7\u63D0\u4F9B\u591A\u8BED\u8A00\u6587\u6848 translations_json" }, 400);
+    }
+    const hasTitle = Object.values(translations_json).some(
+      (b) => b?.title && String(b.title).trim()
+    );
+    if (!hasTitle) {
+      return c.json({ success: false, message: "\u8BF7\u81F3\u5C11\u586B\u5199\u4E00\u79CD\u8BED\u8A00\u7684\u8868\u5355\u6807\u9898" }, 400);
     }
     await updateCustomForm(c.env.DB, id, {
-      title: title2.trim(),
-      description,
       allowed_domains,
       fields: fields || [],
-      style: style || {}
+      style: style || {},
+      translations_json
     });
     return c.json({ success: true });
   } catch (err) {
@@ -6973,10 +7032,9 @@ formsRouter.get("/public/forms/:key", async (c) => {
       success: true,
       data: {
         key: form.key,
-        title: form.title,
-        description: form.description,
         fields: form.fields,
-        style: form.style
+        style: form.style,
+        translations_json: form.translations_json
       }
     });
   } catch (err) {
@@ -7002,7 +7060,7 @@ formsRouter.post("/public/forms/:key/submit", async (c) => {
       if (field.required) {
         const val = data[field.key];
         if (val === void 0 || val === null || val === "" || Array.isArray(val) && val.length === 0) {
-          return c.json({ success: false, message: `\u8BF7\u586B\u5199\u3010${field.label}\u3011` }, 400);
+          return c.json({ success: false, message: `\u8BF7\u586B\u5199\u5FC5\u586B\u9879\uFF1A${field.key}` }, 400);
         }
       }
     }
