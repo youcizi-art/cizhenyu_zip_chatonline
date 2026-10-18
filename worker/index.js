@@ -2265,6 +2265,48 @@ async function searchKnowledge(env2, query, options) {
     };
   }).filter(Boolean);
 }
+function normalizeLlmText(raw2, depth = 0) {
+  if (raw2 == null || depth > 6)
+    return "";
+  if (typeof raw2 === "string")
+    return raw2;
+  if (typeof raw2 === "number" || typeof raw2 === "boolean")
+    return String(raw2);
+  if (typeof raw2?.trim === "function" && typeof raw2 !== "object") {
+    try {
+      return String(raw2);
+    } catch {
+      return "";
+    }
+  }
+  if (Array.isArray(raw2)) {
+    return raw2.map((part) => normalizeLlmText(part, depth + 1)).filter(Boolean).join("");
+  }
+  if (typeof raw2 === "object") {
+    const o = raw2;
+    for (const key of [
+      "response",
+      "text",
+      "content",
+      "output",
+      "generated_text",
+      "result",
+      "message",
+      "delta"
+    ]) {
+      if (o[key] != null && o[key] !== raw2) {
+        const t = normalizeLlmText(o[key], depth + 1);
+        if (t)
+          return t;
+      }
+    }
+  }
+  return "";
+}
+function asTrimmedText(raw2) {
+  const text = normalizeLlmText(raw2);
+  return typeof text === "string" ? text.trim() : "";
+}
 async function callCfWorkersAi(env2, channel2, messages) {
   if (!env2.AI)
     throw new Error("Workers AI \u8FB9\u7F18\u6A21\u578B\u7ED1\u5B9A\u672A\u5F00\u542F");
@@ -2281,20 +2323,24 @@ async function callCfWorkersAi(env2, channel2, messages) {
       max_tokens: channel2.max_tokens || 1024,
       temperature: channel2.temperature ?? 0.3
     });
-    const text = res?.response ?? res?.text ?? res?.result?.response ?? (typeof res === "string" ? res : "");
+    const text = asTrimmedText(res);
     if (!text)
       throw new Error("Workers AI \u8FD4\u56DE\u5185\u5BB9\u4E3A\u7A7A");
     return text;
   } catch (err) {
-    if (modelName !== "@cf/meta/llama-3.2-3b-instruct" && (String(err?.message || err).includes("deprecated") || String(err?.message || err).includes("No such model"))) {
+    const msg = String(err?.message || err);
+    if (modelName !== "@cf/meta/llama-3.2-3b-instruct" && (msg.includes("deprecated") || msg.includes("No such model") || msg.includes("trim is not a function"))) {
       const retryRes = await env2.AI.run("@cf/meta/llama-3.2-3b-instruct", {
         messages,
         max_tokens: channel2.max_tokens || 1024,
         temperature: 0.3
       });
-      const retryText = retryRes?.response ?? retryRes?.text ?? retryRes?.result?.response ?? (typeof retryRes === "string" ? retryRes : "");
+      const retryText = asTrimmedText(retryRes);
       if (retryText)
         return retryText;
+    }
+    if (msg.includes("trim is not a function")) {
+      throw new Error("Workers AI \u8FD4\u56DE\u683C\u5F0F\u5F02\u5E38\uFF0C\u5DF2\u5C1D\u8BD5\u89C4\u8303\u5316\u4ECD\u5931\u8D25");
     }
     throw err;
   }
@@ -2329,7 +2375,7 @@ async function callOpenAiCompatible(channel2, messages) {
       throw new Error(`HTTP ${res.status}: ${errText.substring(0, 150)}`);
     }
     const data = await res.json();
-    const content = data?.choices?.[0]?.message?.content || "";
+    const content = asTrimmedText(data?.choices?.[0]?.message?.content);
     if (!content)
       throw new Error("\u6A21\u578B\u8FD4\u56DE\u7A7A\u5185\u5BB9");
     return content;
@@ -2351,7 +2397,7 @@ async function testAiChannel(env2, channel2) {
       reply = await callOpenAiCompatible(channel2, testMessages);
     }
     const latencyMs = Date.now() - start;
-    return { success: true, latencyMs, reply: reply.trim().substring(0, 50) };
+    return { success: true, latencyMs, reply: asTrimmedText(reply).substring(0, 50) };
   } catch (e) {
     const latencyMs = Date.now() - start;
     return { success: false, latencyMs, error: e.message || "\u8FDE\u63A5\u5931\u8D25" };
@@ -2363,15 +2409,12 @@ async function callLlmWithFallback(env2, messages, configuredChannels) {
   const errors = [];
   for (const ch of activeChannels) {
     try {
-      let output = "";
-      if (ch.type === "cf_workers_ai") {
-        output = await callCfWorkersAi(env2, ch, messages);
-      } else {
-        output = await callOpenAiCompatible(ch, messages);
+      const raw2 = ch.type === "cf_workers_ai" ? await callCfWorkersAi(env2, ch, messages) : await callOpenAiCompatible(ch, messages);
+      const text = asTrimmedText(raw2);
+      if (text) {
+        return { text, channelName: ch.name };
       }
-      if (output.trim()) {
-        return { text: output.trim(), channelName: ch.name };
-      }
+      errors.push(`${ch.name}: \u8FD4\u56DE\u7A7A\u5185\u5BB9`);
     } catch (err) {
       console.warn(`[AI Failover] \u901A\u9053\u3010${ch.name}\u3011\u8C03\u7528\u5931\u8D25: ${err.message}\uFF0C\u6B63\u5728\u65E0\u611F\u5C1D\u8BD5\u4E0B\u4E00\u901A\u9053...`);
       errors.push(`${ch.name}: ${err.message}`);
@@ -2603,6 +2646,8 @@ var init_kbService = __esm({
     __name(splitTextIntoChunks, "splitTextIntoChunks");
     __name(indexDocument, "indexDocument");
     __name(searchKnowledge, "searchKnowledge");
+    __name(normalizeLlmText, "normalizeLlmText");
+    __name(asTrimmedText, "asTrimmedText");
     __name(callCfWorkersAi, "callCfWorkersAi");
     __name(callOpenAiCompatible, "callOpenAiCompatible");
     __name(testAiChannel, "testAiChannel");
