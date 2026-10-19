@@ -1028,20 +1028,6 @@ var init_crypto = __esm({
 });
 
 // src/worker/db/auth.ts
-var auth_exports = {};
-__export(auth_exports, {
-  createAgent: () => createAgent,
-  deleteAgent: () => deleteAgent,
-  ensureDefaultAdmin: () => ensureDefaultAdmin,
-  findLeastLoadedOnlineAgent: () => findLeastLoadedOnlineAgent,
-  getAgentById: () => getAgentById,
-  getAllAgents: () => getAllAgents,
-  getOnlineAgents: () => getOnlineAgents,
-  updateAgent: () => updateAgent,
-  updateAgentStatus: () => updateAgentStatus,
-  updateCurrentProfile: () => updateCurrentProfile,
-  verifyAgent: () => verifyAgent
-});
 async function ensureDefaultAdmin(db) {
   const countRes = await db.prepare("SELECT COUNT(*) as count FROM agents").first();
   if (countRes && countRes.count === 0) {
@@ -1149,10 +1135,6 @@ async function updateCurrentProfile(db, id, data) {
 async function updateAgentStatus(db, id, status) {
   await db.prepare("UPDATE agents SET status = ? WHERE id = ?").bind(status, id).run();
 }
-async function getOnlineAgents(db) {
-  const res = await db.prepare("SELECT * FROM agents WHERE status != 'offline'").all();
-  return res.results || [];
-}
 async function findLeastLoadedOnlineAgent(db) {
   await ensureDefaultAdmin(db);
   let candidates = await db.prepare(
@@ -1195,8 +1177,144 @@ var init_auth = __esm({
     __name(deleteAgent, "deleteAgent");
     __name(updateCurrentProfile, "updateCurrentProfile");
     __name(updateAgentStatus, "updateAgentStatus");
-    __name(getOnlineAgents, "getOnlineAgents");
     __name(findLeastLoadedOnlineAgent, "findLeastLoadedOnlineAgent");
+  }
+});
+
+// src/worker/utils/sessionToken.ts
+var sessionToken_exports = {};
+__export(sessionToken_exports, {
+  assertInternalRequest: () => assertInternalRequest,
+  internalRequestHeaders: () => internalRequestHeaders,
+  issueAgentToken: () => issueAgentToken,
+  issueVisitorToken: () => issueVisitorToken,
+  verifyAgentToken: () => verifyAgentToken,
+  verifyVisitorToken: () => verifyVisitorToken
+});
+function sessionSecret(env2) {
+  return env2.SESSION_SECRET || env2.ADMIN_SECURITY_CODE || env2.ADMIN_PATH_SECRET || "cf-im-dev-session-secret";
+}
+function b64url(bytes) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let s = "";
+  for (let i = 0; i < u8.length; i++)
+    s += String.fromCharCode(u8[i]);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+function b64urlJson(obj) {
+  return b64url(new TextEncoder().encode(JSON.stringify(obj)));
+}
+function fromB64url(s) {
+  const pad = s.length % 4 === 0 ? "" : "=".repeat(4 - s.length % 4);
+  const b64 = s.replace(/-/g, "+").replace(/_/g, "/") + pad;
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++)
+    out[i] = bin.charCodeAt(i);
+  return out;
+}
+async function hmacKey(env2) {
+  return crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(sessionSecret(env2)),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign", "verify"]
+  );
+}
+async function sign(env2, payloadB64) {
+  const key = await hmacKey(env2);
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payloadB64));
+  return b64url(sig);
+}
+async function verifySig(env2, payloadB64, sigB64) {
+  const key = await hmacKey(env2);
+  return crypto.subtle.verify("HMAC", key, fromB64url(sigB64), new TextEncoder().encode(payloadB64));
+}
+async function issueAgentToken(env2, agent) {
+  const payload = {
+    t: "a",
+    id: agent.id,
+    role: agent.role,
+    exp: Date.now() + AGENT_TTL_MS
+  };
+  const body = b64urlJson(payload);
+  const sig = await sign(env2, body);
+  return `${body}.${sig}`;
+}
+async function issueVisitorToken(env2, visitorId, conversationId) {
+  const payload = {
+    t: "v",
+    vid: visitorId,
+    cid: conversationId,
+    exp: Date.now() + VISITOR_TTL_MS
+  };
+  const body = b64urlJson(payload);
+  const sig = await sign(env2, body);
+  return `${body}.${sig}`;
+}
+async function verifyAgentToken(env2, token) {
+  const parts = token.split(".");
+  if (parts.length !== 2)
+    return null;
+  const [body, sig] = parts;
+  if (!await verifySig(env2, body, sig))
+    return null;
+  try {
+    const payload = JSON.parse(new TextDecoder().decode(fromB64url(body)));
+    if (payload.t !== "a" || !payload.id || !payload.exp || payload.exp < Date.now())
+      return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+async function verifyVisitorToken(env2, token, visitorId, conversationId) {
+  const parts = token.split(".");
+  if (parts.length !== 2)
+    return false;
+  const [body, sig] = parts;
+  if (!await verifySig(env2, body, sig))
+    return false;
+  try {
+    const payload = JSON.parse(new TextDecoder().decode(fromB64url(body)));
+    return payload.t === "v" && payload.vid === visitorId && payload.cid === conversationId && !!payload.exp && payload.exp >= Date.now();
+  } catch {
+    return false;
+  }
+}
+function internalRequestHeaders(env2) {
+  return {
+    "Content-Type": "application/json",
+    "X-Internal-Secret": sessionSecret(env2)
+  };
+}
+function assertInternalRequest(env2, req) {
+  const got = req.headers.get("X-Internal-Secret") || "";
+  return !!got && got === sessionSecret(env2);
+}
+var AGENT_TTL_MS, VISITOR_TTL_MS;
+var init_sessionToken = __esm({
+  "src/worker/utils/sessionToken.ts"() {
+    "use strict";
+    init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+    init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+    init_performance2();
+    AGENT_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
+    VISITOR_TTL_MS = 30 * 24 * 60 * 60 * 1e3;
+    __name(sessionSecret, "sessionSecret");
+    __name(b64url, "b64url");
+    __name(b64urlJson, "b64urlJson");
+    __name(fromB64url, "fromB64url");
+    __name(hmacKey, "hmacKey");
+    __name(sign, "sign");
+    __name(verifySig, "verifySig");
+    __name(issueAgentToken, "issueAgentToken");
+    __name(issueVisitorToken, "issueVisitorToken");
+    __name(verifyAgentToken, "verifyAgentToken");
+    __name(verifyVisitorToken, "verifyVisitorToken");
+    __name(internalRequestHeaders, "internalRequestHeaders");
+    __name(assertInternalRequest, "assertInternalRequest");
   }
 });
 
@@ -1338,6 +1456,14 @@ async function getOrCreateConversation(db, visitorId, visitorName, visitorLang, 
           conv.assigned_agent_name = allocated2.name;
         } catch (e) {
         }
+      }
+    }
+    const trimmedName = (visitorName || "").trim().replace(/[<>]/g, "").slice(0, 64);
+    if (trimmedName && trimmedName !== conv.visitor_name && !/^访客_?/.test(trimmedName) && !/^Visitor_?/i.test(trimmedName)) {
+      try {
+        await db.prepare("UPDATE conversations SET visitor_name = ? WHERE id = ?").bind(trimmedName, conv.id).run();
+        conv.visitor_name = trimmedName;
+      } catch (e) {
       }
     }
     try {
@@ -2307,6 +2433,19 @@ function asTrimmedText(raw2) {
   const text = normalizeLlmText(raw2);
   return typeof text === "string" ? text.trim() : "";
 }
+function extractWorkersAiRaw(res) {
+  if (res == null)
+    return "";
+  return res?.response ?? res?.text ?? res?.result?.response ?? res?.result?.text ?? res;
+}
+async function runCfModelOnce(env2, modelName, messages, maxTokens, temperature) {
+  const res = await env2.AI.run(modelName, {
+    messages,
+    max_tokens: maxTokens,
+    temperature
+  });
+  return asTrimmedText(extractWorkersAiRaw(res));
+}
 async function callCfWorkersAi(env2, channel2, messages) {
   if (!env2.AI)
     throw new Error("Workers AI \u8FB9\u7F18\u6A21\u578B\u7ED1\u5B9A\u672A\u5F00\u542F");
@@ -2315,35 +2454,32 @@ async function callCfWorkersAi(env2, channel2, messages) {
     modelName = DEPRECATED_MODEL_MAP[modelName];
   }
   if (!modelName) {
-    modelName = "@cf/meta/llama-3.2-3b-instruct";
+    modelName = "@cf/meta/llama-3.1-8b-instruct";
   }
+  const maxTokens = Math.max(channel2.max_tokens || 0, 1536);
+  const temperature = channel2.temperature ?? 0.3;
   try {
-    const res = await env2.AI.run(modelName, {
-      messages,
-      max_tokens: channel2.max_tokens || 1024,
-      temperature: channel2.temperature ?? 0.3
-    });
-    const text = asTrimmedText(res);
-    if (!text)
-      throw new Error("Workers AI \u8FD4\u56DE\u5185\u5BB9\u4E3A\u7A7A");
-    return text;
+    const text = await runCfModelOnce(env2, modelName, messages, maxTokens, temperature);
+    if (text)
+      return text;
   } catch (err) {
     const msg = String(err?.message || err);
-    if (modelName !== "@cf/meta/llama-3.2-3b-instruct" && (msg.includes("deprecated") || msg.includes("No such model") || msg.includes("trim is not a function"))) {
-      const retryRes = await env2.AI.run("@cf/meta/llama-3.2-3b-instruct", {
-        messages,
-        max_tokens: channel2.max_tokens || 1024,
-        temperature: 0.3
-      });
-      const retryText = asTrimmedText(retryRes);
-      if (retryText)
-        return retryText;
-    }
-    if (msg.includes("trim is not a function")) {
-      throw new Error("Workers AI \u8FD4\u56DE\u683C\u5F0F\u5F02\u5E38\uFF0C\u5DF2\u5C1D\u8BD5\u89C4\u8303\u5316\u4ECD\u5931\u8D25");
+    if (msg.includes("deprecated") || msg.includes("No such model") || msg.includes("not found")) {
+      const ultimate = "@cf/meta/llama-3.1-8b-instruct";
+      if (ultimate !== modelName) {
+        const retry = await runCfModelOnce(env2, ultimate, messages, Math.min(maxTokens, 1536), 0.2);
+        if (retry)
+          return retry;
+      }
     }
     throw err;
   }
+  if (modelName !== "@cf/meta/llama-3.1-8b-instruct") {
+    const retry = await runCfModelOnce(env2, "@cf/meta/llama-3.1-8b-instruct", messages, 1536, 0.2);
+    if (retry)
+      return retry;
+  }
+  throw new Error("Workers AI \u8FD4\u56DE\u5185\u5BB9\u4E3A\u7A7A");
 }
 async function callOpenAiCompatible(channel2, messages) {
   let endpoint = (channel2.endpoint || "https://api.openai.com/v1").trim().replace(/\/+$/, "");
@@ -2545,7 +2681,12 @@ async function translateContentWithAi(env2, params) {
     }
   } catch (e) {
   }
-  modelPool = preferTranslatePool(modelPool);
+  modelPool = preferTranslatePool(modelPool).map((ch) => ({
+    ...ch,
+    // 翻译 JSON 需要更长输出，对齐 tudolist smart 档
+    max_tokens: Math.max(ch.max_tokens || 0, 2048),
+    temperature: ch.temperature ?? 0.2
+  }));
   const labelOf = /* @__PURE__ */ __name((code) => {
     const name = (langLabels[code] || "").trim();
     return name ? `${name} (${code})` : code;
@@ -2615,25 +2756,45 @@ var init_kbService = __esm({
     init_settings();
     EMBEDDING_MODEL = "@cf/baai/bge-large-zh-v1.5";
     DEPRECATED_MODEL_MAP = {
-      "@cf/meta/llama-3.1-8b-instruct": "@cf/meta/llama-3.2-3b-instruct",
-      "@cf/meta/infire-llama-3.1-8b-instruct": "@cf/meta/llama-3.2-3b-instruct",
-      "@cf/qwen/qwen1.5-14b-chat": "@cf/meta/llama-3.2-3b-instruct",
-      "@cf/qwen/qwen2.5-72b-instruct": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+      "@cf/meta/infire-llama-3.1-8b-instruct": "@cf/meta/llama-3.1-8b-instruct",
+      "@cf/qwen/qwen1.5-14b-chat": "@cf/qwen/qwen2.5-72b-instruct"
     };
     DEFAULT_MODEL_POOL = [
-      {
-        id: "default_cf_llama32",
-        name: "Cloudflare Llama-3.2-3B (\u5B98\u65B9\u514D\u8D39\u6781\u901F)",
-        type: "cf_workers_ai",
-        model: "@cf/meta/llama-3.2-3b-instruct",
-        enabled: true
-      },
       {
         id: "default_cf_llama33",
         name: "Cloudflare Llama-3.3-70B (\u5B98\u65B9\u514D\u8D39\u65D7\u8230)",
         type: "cf_workers_ai",
         model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-        enabled: true
+        enabled: true,
+        max_tokens: 2048,
+        temperature: 0.3
+      },
+      {
+        id: "default_cf_qwen72",
+        name: "Cloudflare Qwen2.5-72B",
+        type: "cf_workers_ai",
+        model: "@cf/qwen/qwen2.5-72b-instruct",
+        enabled: true,
+        max_tokens: 2048,
+        temperature: 0.3
+      },
+      {
+        id: "default_cf_llama31",
+        name: "Cloudflare Llama-3.1-8B",
+        type: "cf_workers_ai",
+        model: "@cf/meta/llama-3.1-8b-instruct",
+        enabled: true,
+        max_tokens: 1536,
+        temperature: 0.2
+      },
+      {
+        id: "default_cf_llama32",
+        name: "Cloudflare Llama-3.2-3B (\u5B98\u65B9\u514D\u8D39\u6781\u901F)",
+        type: "cf_workers_ai",
+        model: "@cf/meta/llama-3.2-3b-instruct",
+        enabled: true,
+        max_tokens: 1536,
+        temperature: 0.2
       },
       {
         id: "default_cf_deepseek_r1",
@@ -2648,6 +2809,8 @@ var init_kbService = __esm({
     __name(searchKnowledge, "searchKnowledge");
     __name(normalizeLlmText, "normalizeLlmText");
     __name(asTrimmedText, "asTrimmedText");
+    __name(extractWorkersAiRaw, "extractWorkersAiRaw");
+    __name(runCfModelOnce, "runCfModelOnce");
     __name(callCfWorkersAi, "callCfWorkersAi");
     __name(callOpenAiCompatible, "callOpenAiCompatible");
     __name(testAiChannel, "testAiChannel");
@@ -4969,6 +5132,112 @@ async function verifyTurnstileToken(token, secretKey, remoteIp) {
 __name(verifyTurnstileToken, "verifyTurnstileToken");
 
 // src/worker/routes/auth.ts
+init_sessionToken();
+
+// src/worker/utils/rateLimit.ts
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+init_performance2();
+async function enforceRateLimit(options) {
+  const { key, limit, windowSec } = options;
+  const cacheKey = new Request(`https://ratelimit.internal/${encodeURIComponent(key)}`);
+  const cache = caches.default;
+  try {
+    const hit = await cache.match(cacheKey);
+    let count3 = 0;
+    if (hit) {
+      count3 = Number(hit.headers.get("X-Count") || "0") || 0;
+    }
+    count3 += 1;
+    if (count3 > limit) {
+      return { ok: false, retryAfterSec: windowSec };
+    }
+    const res = new Response("1", {
+      headers: {
+        "X-Count": String(count3),
+        "Cache-Control": `max-age=${windowSec}`
+      }
+    });
+    await cache.put(cacheKey, res);
+    return { ok: true };
+  } catch {
+    return { ok: true };
+  }
+}
+__name(enforceRateLimit, "enforceRateLimit");
+function clientIp(c) {
+  return c.req.header("cf-connecting-ip") || c.req.header("x-real-ip") || "unknown";
+}
+__name(clientIp, "clientIp");
+
+// src/worker/middleware/auth.ts
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+init_performance2();
+init_auth();
+init_sessionToken();
+function extractBearer(c) {
+  const auth = c.req.header("Authorization") || c.req.header("authorization") || "";
+  if (auth.startsWith("Bearer "))
+    return auth.slice(7).trim();
+  return (c.req.header("x-session-token") || "").trim();
+}
+__name(extractBearer, "extractBearer");
+async function requireAgent(c) {
+  const token = extractBearer(c);
+  if (!token) {
+    return c.json({ success: false, message: "\u672A\u6388\u6743\uFF1A\u8BF7\u5148\u767B\u5F55" }, 401);
+  }
+  const payload = await verifyAgentToken(c.env, token);
+  if (!payload) {
+    return c.json({ success: false, message: "\u672A\u6388\u6743\uFF1A\u767B\u5F55\u5DF2\u5931\u6548\uFF0C\u8BF7\u91CD\u65B0\u767B\u5F55" }, 401);
+  }
+  const agent = await getAgentById(c.env.DB, payload.id);
+  if (!agent) {
+    return c.json({ success: false, message: "\u672A\u6388\u6743\uFF1A\u5750\u5E2D\u4E0D\u5B58\u5728\u6216\u5DF2\u5931\u6548" }, 401);
+  }
+  if (payload.role === "admin" && agent.role !== "admin") {
+    return c.json({ success: false, message: "\u672A\u6388\u6743\uFF1A\u6743\u9650\u5DF2\u53D8\u66F4\uFF0C\u8BF7\u91CD\u65B0\u767B\u5F55" }, 401);
+  }
+  return agent;
+}
+__name(requireAgent, "requireAgent");
+async function requireAdmin(c) {
+  const agent = await requireAgent(c);
+  if (agent instanceof Response)
+    return agent;
+  if (agent.role !== "admin") {
+    return c.json({ success: false, message: "\u6743\u9650\u4E0D\u8DB3\uFF1A\u4EC5\u8D85\u7EA7\u7BA1\u7406\u5458\u53EF\u64CD\u4F5C" }, 403);
+  }
+  return agent;
+}
+__name(requireAdmin, "requireAdmin");
+function isErrorResponse(v) {
+  return v instanceof Response;
+}
+__name(isErrorResponse, "isErrorResponse");
+async function requireAgentOrVisitorAccess(c, conversationId, conversationVisitorId) {
+  const token = extractBearer(c);
+  if (token) {
+    const agentPayload = await verifyAgentToken(c.env, token);
+    if (agentPayload) {
+      const agent = await getAgentById(c.env.DB, agentPayload.id);
+      if (agent)
+        return { kind: "agent", agent };
+    }
+  }
+  const { verifyVisitorToken: verifyVisitorToken2 } = await Promise.resolve().then(() => (init_sessionToken(), sessionToken_exports));
+  const visitorId = (c.req.query("visitor_id") || c.req.header("x-visitor-id") || "").trim();
+  const visitorToken = (c.req.query("visitor_token") || c.req.header("x-visitor-token") || "").trim();
+  if (visitorId && visitorToken && visitorId === conversationVisitorId && await verifyVisitorToken2(c.env, visitorToken, visitorId, conversationId)) {
+    return { kind: "visitor", visitorId };
+  }
+  return c.json({ success: false, message: "\u672A\u6388\u6743\uFF1A\u65E0\u6743\u8BBF\u95EE\u8BE5\u4F1A\u8BDD" }, 401);
+}
+__name(requireAgentOrVisitorAccess, "requireAgentOrVisitorAccess");
+
+// src/worker/routes/auth.ts
+init_sessionToken();
 var authRouter = new Hono2();
 authRouter.get("/turnstile-config", async (c) => {
   const siteKey = (c.env.TURNSTILE_SITE_KEY || "").trim();
@@ -4983,6 +5252,14 @@ authRouter.get("/turnstile-config", async (c) => {
 });
 authRouter.post("/login", async (c) => {
   try {
+    const rl = await enforceRateLimit({
+      key: `login:${clientIp(c)}`,
+      limit: 20,
+      windowSec: 300
+    });
+    if (!rl.ok) {
+      return c.json({ success: false, message: "\u767B\u5F55\u5C1D\u8BD5\u8FC7\u4E8E\u9891\u7E41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5" }, 429);
+    }
     const { username, password, security_code, turnstile_token } = await c.req.json();
     if (!username || !password) {
       return c.json({ success: false, message: "\u8BF7\u8F93\u5165\u7528\u6237\u540D\u548C\u5BC6\u7801" }, 400);
@@ -4993,11 +5270,10 @@ authRouter.post("/login", async (c) => {
         return c.json({ success: false, message: "\u540E\u53F0\u5B89\u5168\u7801\u9A8C\u8BC1\u5931\u8D25\uFF0C\u8BF7\u786E\u8BA4\u5B89\u5168\u7801\u6B63\u786E" }, 403);
       }
     }
-    const clientIp = c.req.header("CF-Connecting-IP");
     const isValidHuman = await verifyTurnstileToken(
       turnstile_token,
       c.env.TURNSTILE_SECRET_KEY,
-      clientIp
+      clientIp(c)
     );
     if (!isValidHuman) {
       return c.json({ success: false, message: "\u4EBA\u673A\u9A8C\u8BC1\u5931\u8D25\uFF0C\u8BF7\u5237\u65B0\u91CD\u8BD5" }, 403);
@@ -5007,6 +5283,7 @@ authRouter.post("/login", async (c) => {
       return c.json({ success: false, message: "\u7528\u6237\u540D\u6216\u5BC6\u7801\u9519\u8BEF" }, 401);
     }
     await updateAgentStatus(c.env.DB, agent.id, "online");
+    const token = await issueAgentToken(c.env, { id: agent.id, role: agent.role });
     return c.json({
       success: true,
       data: {
@@ -5014,7 +5291,8 @@ authRouter.post("/login", async (c) => {
         username: agent.username,
         display_name: agent.display_name,
         role: agent.role,
-        status: "online"
+        status: "online",
+        token
       }
     });
   } catch (err) {
@@ -5022,21 +5300,25 @@ authRouter.post("/login", async (c) => {
   }
 });
 authRouter.post("/status", async (c) => {
-  const { agent_id, status } = await c.req.json();
-  if (!agent_id || !status) {
+  const agent = await requireAgent(c);
+  if (isErrorResponse(agent))
+    return agent;
+  const { status } = await c.req.json();
+  if (!status) {
     return c.json({ success: false, message: "\u7F3A\u5C11\u53C2\u6570" }, 400);
   }
-  await updateAgentStatus(c.env.DB, agent_id, status);
+  await updateAgentStatus(c.env.DB, agent.id, status);
   try {
     const res = await c.env.DB.prepare("SELECT count(1) as count FROM agents WHERE status = 'online'").first();
     const count3 = res?.count || 0;
-    const id = c.env.COORDINATOR.idFromName("global_chat_coordinator");
-    const stub = c.env.COORDINATOR.get(id);
-    await stub.fetch(new Request("http://coordinator/broadcast-status", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ has_online: count3 > 0, online_count: count3 })
-    }));
+    const stub = c.env.COORDINATOR.get(c.env.COORDINATOR.idFromName("global_chat_coordinator"));
+    await stub.fetch(
+      new Request("http://coordinator/broadcast-status", {
+        method: "POST",
+        headers: internalRequestHeaders(c.env),
+        body: JSON.stringify({ has_online: count3 > 0, online_count: count3 })
+      })
+    );
   } catch (e) {
   }
   return c.json({ success: true, status });
@@ -5058,26 +5340,39 @@ authRouter.get("/online-status", async (c) => {
   }
 });
 authRouter.get("/me", async (c) => {
-  const agentId = c.req.query("agent_id");
-  if (!agentId)
-    return c.json({ success: false }, 400);
-  const agent = await getAgentById(c.env.DB, agentId);
-  if (!agent)
-    return c.json({ success: false }, 404);
-  return c.json({ success: true, data: agent });
+  const agent = await requireAgent(c);
+  if (isErrorResponse(agent))
+    return agent;
+  return c.json({
+    success: true,
+    data: {
+      id: agent.id,
+      username: agent.username,
+      display_name: agent.display_name,
+      role: agent.role,
+      status: agent.status
+    }
+  });
 });
 authRouter.post("/profile", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const body = await c.req.json();
-    const { agent_id, username, display_name, old_password, new_password } = body;
-    if (!agent_id || !username || !display_name) {
+    const { username, display_name, old_password, new_password } = body;
+    if (!username || !display_name) {
       return c.json({ success: false, message: "\u8BF7\u5B8C\u6574\u586B\u5199\u7528\u6237\u540D\u548C\u59D3\u540D" }, 400);
     }
-    const updated = await updateCurrentProfile(c.env.DB, agent_id, {
+    const updated = await updateCurrentProfile(c.env.DB, agent.id, {
       username,
       display_name,
       old_password,
       new_password
+    });
+    const token = await issueAgentToken(c.env, {
+      id: updated.id,
+      role: updated.role
     });
     return c.json({
       success: true,
@@ -5086,7 +5381,8 @@ authRouter.post("/profile", async (c) => {
         username: updated.username,
         display_name: updated.display_name,
         role: updated.role,
-        status: updated.status
+        status: updated.status,
+        token
       }
     });
   } catch (err) {
@@ -5104,12 +5400,16 @@ init_conversations();
 init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
 init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
 init_performance2();
-async function getMessagesByConversation(db, conversationId, limit = 40, beforeTime) {
+async function getMessagesByConversation(db, conversationId, limit = 40, beforeTime, afterTime) {
   let query = "SELECT * FROM messages WHERE conversation_id = ?";
   const params = [conversationId];
   if (beforeTime && beforeTime > 0) {
     query += " AND created_at < ?";
     params.push(beforeTime);
+  }
+  if (afterTime && afterTime > 0) {
+    query += " AND created_at > ?";
+    params.push(afterTime);
   }
   query += " ORDER BY created_at DESC LIMIT ?";
   params.push(limit);
@@ -5316,9 +5616,18 @@ __name(deleteCustomKey, "deleteCustomKey");
 
 // src/worker/routes/chat.ts
 init_langSettings();
+init_sessionToken();
 var chatRouter = new Hono2();
 chatRouter.post("/visitor/init", async (c) => {
   try {
+    const rl = await enforceRateLimit({
+      key: `visitor-init:${clientIp(c)}`,
+      limit: 60,
+      windowSec: 60
+    });
+    if (!rl.ok) {
+      return c.json({ success: false, message: "\u8BF7\u6C42\u8FC7\u4E8E\u9891\u7E41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5" }, 429);
+    }
     await ensureDefaultAdmin(c.env.DB);
     const body = await c.req.json();
     const {
@@ -5326,6 +5635,7 @@ chatRouter.post("/visitor/init", async (c) => {
       visitor_name,
       visitor_lang,
       conversation_id,
+      messages_after,
       page_context,
       product_snapshot,
       device_info
@@ -5356,14 +5666,15 @@ chatRouter.post("/visitor/init", async (c) => {
       { ip, country, city, isp, timezone },
       { page_context, product_snapshot, device_info }
     );
-    const messages = await getMessagesByConversation(c.env.DB, conversation.id, 40);
+    const afterTs = Number(messages_after) > 0 ? Number(messages_after) : void 0;
+    const messages = await getMessagesByConversation(c.env.DB, conversation.id, 40, void 0, afterTs);
     if (isNew && c.env.COORDINATOR) {
       try {
         const stub = c.env.COORDINATOR.get(c.env.COORDINATOR.idFromName("global_chat_coordinator"));
         await stub.fetch(
           new Request("http://coordinator/broadcast-message", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: internalRequestHeaders(c.env),
             body: JSON.stringify({
               conversation_id: conversation.id,
               id: `sys_init_${conversation.id}`,
@@ -5378,12 +5689,14 @@ chatRouter.post("/visitor/init", async (c) => {
       } catch {
       }
     }
+    const visitor_token = await issueVisitorToken(c.env, visitor_id, conversation.id);
     return c.json({
       success: true,
       data: {
         conversation,
         messages,
-        isNew
+        isNew,
+        visitor_token
       }
     });
   } catch (err) {
@@ -5395,6 +5708,16 @@ chatRouter.post("/visitor/context", async (c) => {
     const { conversation_id, visitor_id, page_context, product_snapshot, device_info } = await c.req.json();
     if (!conversation_id || !visitor_id || !page_context) {
       return c.json({ success: false, message: "\u53C2\u6570\u4E0D\u5B8C\u6574" }, 400);
+    }
+    const access = await requireAgentOrVisitorAccess(c, conversation_id, visitor_id);
+    if (access instanceof Response)
+      return access;
+    if (access.kind === "visitor" && access.visitorId !== visitor_id) {
+      return c.json({ success: false, message: "\u672A\u6388\u6743\uFF1A\u4F1A\u8BDD\u4E0D\u5339\u914D" }, 403);
+    }
+    const owned = await c.env.DB.prepare("SELECT id FROM conversations WHERE id = ? AND visitor_id = ?").bind(conversation_id, visitor_id).first();
+    if (!owned) {
+      return c.json({ success: false, message: "\u672A\u6388\u6743\uFF1A\u4F1A\u8BDD\u4E0D\u5339\u914D" }, 403);
     }
     const ok = await updateConversationContext(
       c.env.DB,
@@ -5411,6 +5734,9 @@ chatRouter.post("/visitor/context", async (c) => {
 });
 chatRouter.get("/conversations/:id/journey", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const convId = c.req.param("id");
     const list = await getVisitorJourneyLogs(c.env.DB, convId);
     return c.json({ success: true, data: list });
@@ -5420,14 +5746,12 @@ chatRouter.get("/conversations/:id/journey", async (c) => {
 });
 chatRouter.get("/conversations", async (c) => {
   try {
-    const agentId = c.req.header("x-agent-id");
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const platform2 = c.req.query("platform");
-    let isAdmin = false;
-    if (agentId) {
-      const ag = await getAgentById(c.env.DB, agentId);
-      isAdmin = ag?.role === "admin";
-    }
-    const list = await getConversations(c.env.DB, agentId, isAdmin, platform2);
+    const isAdmin = agent.role === "admin";
+    const list = await getConversations(c.env.DB, agent.id, isAdmin, platform2);
     return c.json({ success: true, data: list });
   } catch (err) {
     return c.json({ success: false, message: err.message }, 500);
@@ -5436,24 +5760,44 @@ chatRouter.get("/conversations", async (c) => {
 chatRouter.get("/conversations/:id/messages", async (c) => {
   try {
     const convId = c.req.param("id");
+    const conv = await c.env.DB.prepare("SELECT id, visitor_id FROM conversations WHERE id = ?").bind(convId).first();
+    if (!conv)
+      return c.json({ success: false, message: "\u4F1A\u8BDD\u4E0D\u5B58\u5728" }, 404);
+    const access = await requireAgentOrVisitorAccess(c, conv.id, conv.visitor_id);
+    if (access instanceof Response)
+      return access;
     const limit = Number(c.req.query("limit")) || 40;
     const before = Number(c.req.query("before")) || void 0;
-    const messages = await getMessagesByConversation(c.env.DB, convId, limit, before);
+    const after = Number(c.req.query("after")) || void 0;
+    const messages = await getMessagesByConversation(c.env.DB, convId, limit, before, after);
     return c.json({ success: true, data: messages });
   } catch (err) {
     return c.json({ success: false, message: err.message }, 500);
   }
 });
 chatRouter.post("/conversations/:id/read", async (c) => {
-  const convId = c.req.param("id");
-  const { by } = await c.req.json();
-  if (by) {
-    await markConversationAsRead(c.env.DB, convId, by);
+  try {
+    const convId = c.req.param("id");
+    const conv = await c.env.DB.prepare("SELECT id, visitor_id FROM conversations WHERE id = ?").bind(convId).first();
+    if (!conv)
+      return c.json({ success: false, message: "\u4F1A\u8BDD\u4E0D\u5B58\u5728" }, 404);
+    const access = await requireAgentOrVisitorAccess(c, conv.id, conv.visitor_id);
+    if (access instanceof Response)
+      return access;
+    const { by } = await c.req.json();
+    if (by) {
+      await markConversationAsRead(c.env.DB, convId, by);
+    }
+    return c.json({ success: true });
+  } catch (err) {
+    return c.json({ success: false, message: err.message }, 500);
   }
-  return c.json({ success: true });
 });
 chatRouter.get("/conversations/:id/media-count", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const convId = c.req.param("id");
     const count3 = await countConversationMedia(c.env.DB, convId);
     return c.json({ success: true, data: { count: count3 } });
@@ -5463,22 +5807,17 @@ chatRouter.get("/conversations/:id/media-count", async (c) => {
 });
 chatRouter.delete("/conversations/:id", async (c) => {
   try {
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
     const convId = c.req.param("id");
-    const agentId = c.req.header("x-agent-id") || c.req.query("agent_id");
-    if (agentId) {
-      const { getAgentById: getAgentById2 } = await Promise.resolve().then(() => (init_auth(), auth_exports));
-      const agent = await getAgentById2(c.env.DB, agentId);
-      if (agent && agent.role !== "admin") {
-        return c.json({ success: false, message: "\u6743\u9650\u4E0D\u8DB3\uFF1A\u4EC5\u8D85\u7EA7\u7BA1\u7406\u5458\u53EF\u4EE5\u5F7B\u5E95\u5220\u9664\u804A\u5929\u8BB0\u5F55" }, 403);
-      }
-    }
     if (c.env.COORDINATOR) {
       try {
         const stub = c.env.COORDINATOR.get(c.env.COORDINATOR.idFromName("global_chat_coordinator"));
         await stub.fetch(
           new Request("http://coordinator/broadcast-deleted", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: internalRequestHeaders(c.env),
             body: JSON.stringify({
               conversation_id: convId,
               clear_identity: true
@@ -5499,6 +5838,9 @@ chatRouter.delete("/conversations/:id", async (c) => {
 });
 chatRouter.post("/conversations/:id/tag", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const convId = c.req.param("id");
     const { tag } = await c.req.json();
     const { updateConversationTag: updateConversationTag2 } = await Promise.resolve().then(() => (init_conversations(), conversations_exports));
@@ -5510,14 +5852,9 @@ chatRouter.post("/conversations/:id/tag", async (c) => {
 });
 chatRouter.post("/admin/conversations/batch-cleanup", async (c) => {
   try {
-    const agentId = c.req.header("x-agent-id") || c.req.query("agent_id");
-    if (agentId) {
-      const { getAgentById: getAgentById2 } = await Promise.resolve().then(() => (init_auth(), auth_exports));
-      const agent = await getAgentById2(c.env.DB, agentId);
-      if (agent && agent.role !== "admin") {
-        return c.json({ success: false, message: "\u6743\u9650\u4E0D\u8DB3\uFF1A\u4EC5\u8D85\u7EA7\u7BA1\u7406\u5458\u53EF\u4EE5\u6267\u884C\u6279\u91CF\u6E05\u7406" }, 403);
-      }
-    }
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
     const body = await c.req.json();
     const { clean_silent, group_ids, tag_mode } = body;
     const { batchCleanupConversations: batchCleanupConversations2 } = await Promise.resolve().then(() => (init_conversations(), conversations_exports));
@@ -5571,11 +5908,30 @@ chatRouter.get("/widget/config", async (c) => {
 });
 chatRouter.post("/visitor/ticket", async (c) => {
   try {
-    const { visitor_id, visitor_name, contact, content, conversation_id, extra_fields } = await c.req.json();
+    const rl = await enforceRateLimit({
+      key: `ticket:${clientIp(c)}`,
+      limit: 15,
+      windowSec: 300
+    });
+    if (!rl.ok) {
+      return c.json({ success: false, message: "\u63D0\u4EA4\u8FC7\u4E8E\u9891\u7E41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5" }, 429);
+    }
+    const {
+      visitor_id,
+      visitor_name,
+      contact,
+      content,
+      conversation_id,
+      extra_fields,
+      source_url
+    } = await c.req.json();
     if (!content || !contact) {
       return c.json({ success: false, message: "\u8BF7\u5B8C\u6574\u586B\u5199\u8054\u7CFB\u65B9\u5F0F\u4E0E\u7559\u8A00\u5185\u5BB9" }, 400);
     }
-    const name = visitor_name || "\u8BBF\u5BA2";
+    const name = String(visitor_name || "\u8BBF\u5BA2").trim().slice(0, 64) || "\u8BBF\u5BA2";
+    const contactStr = String(contact).trim().slice(0, 200);
+    const contentStr = String(content).trim().slice(0, 4e3);
+    const vid = String(visitor_id || "").trim() || `v_ticket_${crypto.randomUUID().slice(0, 8)}`;
     const now = Date.now();
     let extraText = "";
     if (extra_fields && typeof extra_fields === "object") {
@@ -5591,85 +5947,98 @@ chatRouter.post("/visitor/ticket", async (c) => {
 ` + lines.join("\n");
       }
     }
-    const ticketContent = `\u3010\u7559\u8A00\u4E0E\u9700\u6C42\u5DE5\u5355\u3011
+    const srcLine = source_url ? `
+\u6765\u6E90\u9875\uFF1A${String(source_url).slice(0, 500)}` : "";
+    const ticketContent = `\u3010\u90AE\u4EF6\u7559\u8A00\u3011
 \u79F0\u547C\uFF1A${name}
-\u8054\u7CFB\u65B9\u5F0F\uFF1A${contact}
-\u7559\u8A00\u5185\u5BB9\uFF1A${content}${extraText}`;
-    if (conversation_id) {
-      const msgId = "msg_" + crypto.randomUUID().slice(0, 10);
-      await c.env.DB.prepare(
-        `INSERT INTO messages (
-          id, conversation_id, sender_type, sender_id, sender_name,
-          message_type, content, status, created_at
-        ) VALUES (?, ?, 'visitor', ?, ?, 'text', ?, 'sent', ?)`
-      ).bind(
-        msgId,
-        conversation_id,
-        visitor_id || "visitor",
-        name,
-        ticketContent,
-        now
-      ).run();
-      await c.env.DB.prepare(
-        "UPDATE conversations SET last_message_text = ?, last_message_time = ?, unread_agent_count = unread_agent_count + 1 WHERE id = ?"
-      ).bind(ticketContent, now, conversation_id).run();
-      try {
-        const id = c.env.COORDINATOR.idFromName("global_chat_coordinator");
-        const stub = c.env.COORDINATOR.get(id);
-        await stub.fetch(new Request("http://coordinator/broadcast-message", {
+\u8054\u7CFB\u65B9\u5F0F\uFF1A${contactStr}
+\u7559\u8A00\u5185\u5BB9\uFF1A${contentStr}${extraText}${srcLine}`;
+    let convId = typeof conversation_id === "string" ? conversation_id.trim() : "";
+    if (!convId || convId.startsWith("pending_")) {
+      const { conversation } = await getOrCreateConversation(c.env.DB, vid, name);
+      convId = conversation.id;
+    } else {
+      const exists = await c.env.DB.prepare("SELECT id, visitor_id FROM conversations WHERE id = ?").bind(convId).first();
+      if (!exists) {
+        const { conversation } = await getOrCreateConversation(c.env.DB, vid, name);
+        convId = conversation.id;
+      }
+    }
+    const msgId = "msg_" + crypto.randomUUID().slice(0, 10);
+    await c.env.DB.prepare(
+      `INSERT INTO messages (
+        id, conversation_id, sender_type, sender_id, sender_name,
+        message_type, content, status, created_at
+      ) VALUES (?, ?, 'visitor', ?, ?, 'text', ?, 'sent', ?)`
+    ).bind(msgId, convId, vid, name, ticketContent, now).run();
+    await c.env.DB.prepare(
+      `UPDATE conversations SET
+        visitor_name = ?,
+        last_message_text = ?,
+        last_message_time = ?,
+        unread_agent_count = unread_agent_count + 1,
+        tag = COALESCE(NULLIF(tag, ''), '\u90AE\u4EF6\u7559\u8A00')
+      WHERE id = ?`
+    ).bind(name, ticketContent.slice(0, 200), now, convId).run();
+    try {
+      const stub = c.env.COORDINATOR.get(c.env.COORDINATOR.idFromName("global_chat_coordinator"));
+      await stub.fetch(
+        new Request("http://coordinator/broadcast-message", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: internalRequestHeaders(c.env),
           body: JSON.stringify({
             id: msgId,
-            conversation_id,
+            conversation_id: convId,
             sender_type: "visitor",
-            sender_id: visitor_id || "visitor",
+            sender_id: vid,
             sender_name: name,
             message_type: "text",
             content: ticketContent,
             status: "sent",
             created_at: now
           })
-        }));
-      } catch (e) {
-      }
+        })
+      );
+    } catch (e) {
     }
     const { dispatchLeaveMessageNotification: dispatchLeaveMessageNotification2 } = await Promise.resolve().then(() => (init_notifier(), notifier_exports));
     const notifyRes = await dispatchLeaveMessageNotification2(c.env, {
       visitor_name: name,
-      contact,
-      content,
-      conversation_id,
-      visitor_id
-    });
-    if (conversation_id) {
-      c.executionCtx.waitUntil((async () => {
+      contact: contactStr,
+      content: contentStr,
+      conversation_id: convId,
+      visitor_id: vid
+    }).catch(() => ({ ok: false }));
+    c.executionCtx.waitUntil(
+      (async () => {
         try {
           const { askKnowledge: askKnowledge2 } = await Promise.resolve().then(() => (init_kbService(), kbService_exports));
-          const { answer } = await askKnowledge2(c.env, content);
-          if (answer) {
-            const aiReplyText = `\u3010AI \u667A\u80FD\u9884\u7B54\u590D\u3011
+          const { answer } = await askKnowledge2(c.env, contentStr);
+          if (!answer)
+            return;
+          const aiReplyText = `\u3010AI \u667A\u80FD\u9884\u7B54\u590D\u3011
 \u6211\u4EEC\u5DF2\u6536\u5230\u60A8\u7684\u7559\u8A00\u5E76\u5DF2\u63D0\u9192\u4EBA\u5DE5\u5BA2\u670D\u7A0D\u540E\u8DDF\u8FDB\uFF01\u6839\u636E\u4F01\u4E1A\u77E5\u8BC6\u5E93\uFF0C\u521D\u6B65\u4E3A\u60A8\u67E5\u8BE2\u5230\u4EE5\u4E0B\u53C2\u8003\u4FE1\u606F\uFF1A
 
 ${answer}`;
-            const aiMsgId = "msg_" + crypto.randomUUID().slice(0, 10);
-            const aiNow = Date.now();
-            await c.env.DB.prepare(
-              `INSERT INTO messages (
-                id, conversation_id, sender_type, sender_id, sender_name,
-                message_type, content, status, created_at
-              ) VALUES (?, ?, 'agent', 'ai_bot', 'AI \u667A\u80FD\u5BA2\u670D', 'text', ?, 'sent', ?)`
-            ).bind(aiMsgId, conversation_id, aiReplyText, aiNow).run();
-            await c.env.DB.prepare(
-              "UPDATE conversations SET last_message_text = ?, last_message_time = ? WHERE id = ?"
-            ).bind(aiReplyText, aiNow, conversation_id).run();
-            const stub = c.env.COORDINATOR.get(c.env.COORDINATOR.idFromName("global_chat_coordinator"));
-            await stub.fetch(new Request("http://coordinator/broadcast-message", {
+          const aiMsgId = "msg_" + crypto.randomUUID().slice(0, 10);
+          const aiNow = Date.now();
+          await c.env.DB.prepare(
+            `INSERT INTO messages (
+              id, conversation_id, sender_type, sender_id, sender_name,
+              message_type, content, status, created_at
+            ) VALUES (?, ?, 'agent', 'ai_bot', 'AI \u667A\u80FD\u5BA2\u670D', 'text', ?, 'sent', ?)`
+          ).bind(aiMsgId, convId, aiReplyText, aiNow).run();
+          await c.env.DB.prepare(
+            "UPDATE conversations SET last_message_text = ?, last_message_time = ? WHERE id = ?"
+          ).bind(aiReplyText.slice(0, 200), aiNow, convId).run();
+          const stub = c.env.COORDINATOR.get(c.env.COORDINATOR.idFromName("global_chat_coordinator"));
+          await stub.fetch(
+            new Request("http://coordinator/broadcast-message", {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: internalRequestHeaders(c.env),
               body: JSON.stringify({
                 id: aiMsgId,
-                conversation_id,
+                conversation_id: convId,
                 sender_type: "agent",
                 sender_id: "ai_bot",
                 sender_name: "AI \u667A\u80FD\u5BA2\u670D",
@@ -5678,17 +6047,17 @@ ${answer}`;
                 status: "sent",
                 created_at: aiNow
               })
-            }));
-          }
+            })
+          );
         } catch (e) {
           console.warn("Failed to generate ticket pre-reply with KB", e);
         }
-      })());
-    }
+      })()
+    );
     return c.json({
       success: true,
       message: "\u60A8\u7684\u7559\u8A00\u5DF2\u6210\u529F\u63D0\u4EA4\uFF0C\u5BA2\u670D\u5C06\u5C3D\u5FEB\u4E0E\u60A8\u8054\u7CFB\uFF01",
-      data: notifyRes
+      data: { conversation_id: convId, message_id: msgId, notify: notifyRes }
     });
   } catch (err) {
     return c.json({ success: false, message: err.message }, 500);
@@ -5723,17 +6092,11 @@ __name(getDashboardStats, "getDashboardStats");
 // src/worker/routes/admin.ts
 init_settings();
 var adminRouter = new Hono2();
-async function checkAdmin(c) {
-  const agentId = c.req.header("x-agent-id") || c.req.query("agent_id");
-  if (!agentId)
-    return true;
-  const { getAgentById: getAgentById2 } = await Promise.resolve().then(() => (init_auth(), auth_exports));
-  const agent = await getAgentById2(c.env.DB, agentId);
-  return !agent || agent.role === "admin";
-}
-__name(checkAdmin, "checkAdmin");
 adminRouter.get("/agents", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const list = await getAllAgents(c.env.DB);
     return c.json({ success: true, data: list });
   } catch (err) {
@@ -5742,9 +6105,9 @@ adminRouter.get("/agents", async (c) => {
 });
 adminRouter.post("/agents", async (c) => {
   try {
-    if (!await checkAdmin(c)) {
-      return c.json({ success: false, message: "\u6743\u9650\u4E0D\u8DB3\uFF1A\u4EC5\u8D85\u7EA7\u7BA1\u7406\u5458\u53EF\u4EE5\u7BA1\u7406\u5750\u5E2D\u5458\u5DE5" }, 403);
-    }
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
     const body = await c.req.json();
     const { username, password, display_name, role } = body;
     if (!username || !password || !display_name) {
@@ -5758,9 +6121,9 @@ adminRouter.post("/agents", async (c) => {
 });
 adminRouter.put("/agents/:id", async (c) => {
   try {
-    if (!await checkAdmin(c)) {
-      return c.json({ success: false, message: "\u6743\u9650\u4E0D\u8DB3\uFF1A\u4EC5\u8D85\u7EA7\u7BA1\u7406\u5458\u53EF\u4EE5\u4FEE\u6539\u5750\u5E2D\u4FE1\u606F" }, 403);
-    }
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
     const id = c.req.param("id");
     const body = await c.req.json();
     await updateAgent(c.env.DB, id, body);
@@ -5771,9 +6134,9 @@ adminRouter.put("/agents/:id", async (c) => {
 });
 adminRouter.delete("/agents/:id", async (c) => {
   try {
-    if (!await checkAdmin(c)) {
-      return c.json({ success: false, message: "\u6743\u9650\u4E0D\u8DB3\uFF1A\u4EC5\u8D85\u7EA7\u7BA1\u7406\u5458\u53EF\u4EE5\u5220\u9664\u5750\u5E2D\u5458\u5DE5" }, 403);
-    }
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
     const id = c.req.param("id");
     await deleteAgent(c.env.DB, id);
     return c.json({ success: true });
@@ -5783,6 +6146,9 @@ adminRouter.delete("/agents/:id", async (c) => {
 });
 adminRouter.get("/stats", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const stats = await getDashboardStats(c.env.DB);
     return c.json({ success: true, data: stats });
   } catch (err) {
@@ -5791,6 +6157,9 @@ adminRouter.get("/stats", async (c) => {
 });
 adminRouter.get("/settings", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const data = await getSystemSettings(c.env.DB);
     return c.json({ success: true, data });
   } catch (err) {
@@ -5799,9 +6168,9 @@ adminRouter.get("/settings", async (c) => {
 });
 adminRouter.post("/settings", async (c) => {
   try {
-    if (!await checkAdmin(c)) {
-      return c.json({ success: false, message: "\u6743\u9650\u4E0D\u8DB3\uFF1A\u4EC5\u8D85\u7EA7\u7BA1\u7406\u5458\u53EF\u4EE5\u4FEE\u6539\u7CFB\u7EDF\u914D\u7F6E" }, 403);
-    }
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
     const body = await c.req.json();
     await updateSystemSettings(c.env.DB, body);
     return c.json({ success: true });
@@ -5811,6 +6180,9 @@ adminRouter.post("/settings", async (c) => {
 });
 adminRouter.post("/notify/test", async (c) => {
   try {
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
     const { dispatchLeaveMessageNotification: dispatchLeaveMessageNotification2 } = await Promise.resolve().then(() => (init_notifier(), notifier_exports));
     const res = await dispatchLeaveMessageNotification2(c.env, {
       visitor_name: "\u6D4B\u8BD5\u5BA2\u6237 (\u7CFB\u7EDF\u8054\u901A\u6D4B\u8BD5)",
@@ -5838,6 +6210,9 @@ i18nRouter.get("/languages", async (c) => {
 });
 i18nRouter.post("/languages", async (c) => {
   try {
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
     const { code, name } = await c.req.json();
     if (!code || !name) {
       return c.json({ success: false, message: "\u8BF7\u5B8C\u6574\u586B\u5199\u8BED\u8A00\u4EE3\u7801\u548C\u540D\u79F0" }, 400);
@@ -5850,6 +6225,9 @@ i18nRouter.post("/languages", async (c) => {
 });
 i18nRouter.delete("/languages/:code", async (c) => {
   try {
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
     const code = c.req.param("code");
     await deleteLanguage(c.env.DB, code);
     return c.json({ success: true });
@@ -5859,6 +6237,9 @@ i18nRouter.delete("/languages/:code", async (c) => {
 });
 i18nRouter.post("/languages/:code/default", async (c) => {
   try {
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
     const code = c.req.param("code");
     await setDefaultLanguage(c.env.DB, code);
     return c.json({ success: true });
@@ -5877,6 +6258,9 @@ i18nRouter.get("/translations", async (c) => {
 });
 i18nRouter.post("/translations", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const { lang_code, translations } = await c.req.json();
     if (!lang_code || !translations) {
       return c.json({ success: false, message: "\u7F3A\u5C11\u53C2\u6570" }, 400);
@@ -5884,11 +6268,14 @@ i18nRouter.post("/translations", async (c) => {
     await saveTranslations(c.env.DB, lang_code, translations);
     return c.json({ success: true });
   } catch (err) {
-    return c.json({ success: false, message: err.message }, 400);
+    return c.json({ success: false, message: err.message }, 500);
   }
 });
 i18nRouter.post("/custom-keys", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const { key, default_value, description } = await c.req.json();
     if (!key)
       return c.json({ success: false, message: "\u8BCD\u6761\u952E\u540D\u4E0D\u80FD\u4E3A\u7A7A" }, 400);
@@ -5900,6 +6287,9 @@ i18nRouter.post("/custom-keys", async (c) => {
 });
 i18nRouter.delete("/custom-keys/:key", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const key = c.req.param("key");
     await deleteCustomKey(c.env.DB, key);
     return c.json({ success: true });
@@ -5915,10 +6305,22 @@ init_performance2();
 var uploadRouter = new Hono2();
 uploadRouter.post("/upload", async (c) => {
   try {
+    const rl = await enforceRateLimit({
+      key: `upload:${clientIp(c)}`,
+      limit: 40,
+      windowSec: 300
+    });
+    if (!rl.ok) {
+      return c.json({ success: false, message: "\u4E0A\u4F20\u8FC7\u4E8E\u9891\u7E41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5" }, 429);
+    }
     const formData = await c.req.parseBody();
     const file = formData["file"];
     if (!file) {
       return c.json({ success: false, message: "\u672A\u627E\u5230\u4E0A\u4F20\u6587\u4EF6" }, 400);
+    }
+    const maxBytes = 15 * 1024 * 1024;
+    if (typeof file.size === "number" && file.size > maxBytes) {
+      return c.json({ success: false, message: "\u6587\u4EF6\u8FC7\u5927\uFF08\u4E0A\u9650 15MB\uFF09" }, 400);
     }
     const ext = file.name ? file.name.split(".").pop() || "bin" : "bin";
     const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10).replace(/-/g, "");
@@ -6009,6 +6411,9 @@ __name(setConversationGroup, "setConversationGroup");
 var groupsRouter = new Hono2();
 groupsRouter.get("/groups", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const list = await getGroups(c.env.DB);
     return c.json({ success: true, data: list });
   } catch (err) {
@@ -6017,6 +6422,9 @@ groupsRouter.get("/groups", async (c) => {
 });
 groupsRouter.post("/groups", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const { name, color } = await c.req.json();
     if (!name)
       return c.json({ success: false, message: "\u5206\u7EC4\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A" }, 400);
@@ -6028,6 +6436,9 @@ groupsRouter.post("/groups", async (c) => {
 });
 groupsRouter.put("/groups/:id", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const id = c.req.param("id");
     const { name, color } = await c.req.json();
     await updateGroup(c.env.DB, id, name, color);
@@ -6038,6 +6449,9 @@ groupsRouter.put("/groups/:id", async (c) => {
 });
 groupsRouter.delete("/groups/:id", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const id = c.req.param("id");
     await deleteGroup(c.env.DB, id);
     return c.json({ success: true });
@@ -6047,6 +6461,9 @@ groupsRouter.delete("/groups/:id", async (c) => {
 });
 groupsRouter.post("/conversations/:id/group", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const convId = c.req.param("id");
     const { group_id } = await c.req.json();
     if (!group_id)
@@ -6157,6 +6574,9 @@ privateChatRouter.get("/private-chats/feature-status", async (c) => {
 });
 privateChatRouter.get("/private-chats", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     if (!privateChatEnabled(c.env)) {
       return c.json({ success: false, message: "\u4E13\u5C5E\u529F\u80FD\u672A\u5F00\u542F" }, 404);
     }
@@ -6168,12 +6588,15 @@ privateChatRouter.get("/private-chats", async (c) => {
 });
 privateChatRouter.post("/private-chats", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const body = await c.req.json();
-    const { title: title2, password, agent_id, expires_hours } = body;
-    if (!title2 || !password || !agent_id) {
+    const { title: title2, password, expires_hours } = body;
+    if (!title2 || !password) {
       return c.json({ success: false, message: "\u8BF7\u5B8C\u6574\u586B\u5199\u79C1\u804A\u4E3B\u9898\u4E0E\u5BC6\u7801" }, 400);
     }
-    const item = await createPrivateChat(c.env.DB, title2, password, agent_id, expires_hours);
+    const item = await createPrivateChat(c.env.DB, title2, password, agent.id, expires_hours);
     return c.json({ success: true, data: item });
   } catch (err) {
     return c.json({ success: false, message: err.message }, 500);
@@ -6181,6 +6604,9 @@ privateChatRouter.post("/private-chats", async (c) => {
 });
 privateChatRouter.delete("/private-chats/:id", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const id = c.req.param("id");
     await deletePrivateChat(c.env.DB, id, c.env.MEDIA_BUCKET);
     return c.json({ success: true });
@@ -6190,6 +6616,14 @@ privateChatRouter.delete("/private-chats/:id", async (c) => {
 });
 privateChatRouter.post("/private-chat/verify", async (c) => {
   try {
+    const rl = await enforceRateLimit({
+      key: `pchat-verify:${clientIp(c)}`,
+      limit: 20,
+      windowSec: 300
+    });
+    if (!rl.ok) {
+      return c.json({ success: false, message: "\u5C1D\u8BD5\u8FC7\u4E8E\u9891\u7E41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5" }, 429);
+    }
     const { id, password } = await c.req.json();
     if (!id || !password) {
       return c.json({ success: false, message: "\u8BF7\u8F93\u5165\u4E13\u5C5E\u8BBF\u95EE\u5BC6\u7801" }, 400);
@@ -6454,10 +6888,12 @@ async function getCrmStats(db) {
 __name(getCrmStats, "getCrmStats");
 
 // src/worker/routes/crm.ts
-init_auth();
 var crmRouter = new Hono2();
 crmRouter.get("/crm/customers", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const search = c.req.query("search");
     const stage = c.req.query("stage");
     const groupId = c.req.query("group_id");
@@ -6475,6 +6911,9 @@ crmRouter.get("/crm/customers", async (c) => {
 });
 crmRouter.post("/crm/customers", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const body = await c.req.json();
     if (!body.name || !body.name.trim()) {
       return c.json({ success: false, message: "\u5BA2\u6237\u59D3\u540D\u4E0D\u80FD\u4E3A\u7A7A" }, 400);
@@ -6492,9 +6931,9 @@ crmRouter.post("/crm/customers", async (c) => {
       source: body.source || "chat",
       source_conv_id: body.source_conv_id || null,
       remark: body.remark ? body.remark.trim() : null,
-      owner_id: body.owner_id || null,
-      owner_name: body.owner_name || null,
-      owner_username: body.owner_username ? body.owner_username.trim() : null
+      owner_id: body.owner_id || agent.id,
+      owner_name: body.owner_name || agent.display_name,
+      owner_username: body.owner_username ? body.owner_username.trim() : agent.username
     });
     return c.json({ success: true, data: customer });
   } catch (err) {
@@ -6503,6 +6942,9 @@ crmRouter.post("/crm/customers", async (c) => {
 });
 crmRouter.put("/crm/customers/:id", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const id = c.req.param("id");
     const body = await c.req.json();
     const updated = await updateCrmCustomer(c.env.DB, id, body);
@@ -6516,27 +6958,10 @@ crmRouter.put("/crm/customers/:id", async (c) => {
 });
 crmRouter.delete("/crm/customers/:id", async (c) => {
   try {
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
     const id = c.req.param("id");
-    let agentId = c.req.header("x-agent-id") || c.req.query("agent_id");
-    if (!agentId) {
-      const authHeader = c.req.header("authorization") || "";
-      if (authHeader.startsWith("Bearer ")) {
-        const token = authHeader.substring(7).trim();
-        try {
-          const payload = JSON.parse(atob(token.split(".")[1] || ""));
-          if (payload?.id)
-            agentId = payload.id;
-        } catch (e) {
-        }
-      }
-    }
-    if (!agentId) {
-      return c.json({ success: false, message: "\u672A\u6388\u6743\uFF1A\u8BF7\u63D0\u4F9B\u5750\u5E2D\u51ED\u8BC1" }, 401);
-    }
-    const agent = await getAgentById(c.env.DB, agentId);
-    if (!agent || agent.role !== "admin") {
-      return c.json({ success: false, message: "\u6743\u9650\u4E0D\u8DB3\uFF1A\u4EC5\u8D85\u7EA7\u7BA1\u7406\u5458\u53EF\u4EE5\u5220\u9664\u5BA2\u6237\u8D44\u6599" }, 403);
-    }
     await deleteCrmCustomer(c.env.DB, id);
     return c.json({ success: true });
   } catch (err) {
@@ -6545,15 +6970,11 @@ crmRouter.delete("/crm/customers/:id", async (c) => {
 });
 crmRouter.post("/crm/customers/:id/new-cycle", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const id = c.req.param("id");
-    const agentId = c.req.header("x-agent-id");
-    let agentName = "\u5BA2\u670D";
-    if (agentId) {
-      const ag = await getAgentById(c.env.DB, agentId);
-      if (ag)
-        agentName = ag.display_name;
-    }
-    const updated = await startNewCustomerCycle(c.env.DB, id, agentId, agentName);
+    const updated = await startNewCustomerCycle(c.env.DB, id, agent.id, agent.display_name);
     return c.json({ success: true, data: updated });
   } catch (err) {
     return c.json({ success: false, message: err.message }, 500);
@@ -6561,6 +6982,9 @@ crmRouter.post("/crm/customers/:id/new-cycle", async (c) => {
 });
 crmRouter.get("/crm/followups", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const customerId = c.req.query("customer_id");
     const cycleStr = c.req.query("cycle_number");
     const cycleNumber = cycleStr ? Number(cycleStr) : void 0;
@@ -6572,14 +6996,17 @@ crmRouter.get("/crm/followups", async (c) => {
 });
 crmRouter.post("/crm/followups", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const body = await c.req.json();
     if (!body.customer_id || !body.content || !body.content.trim()) {
       return c.json({ success: false, message: "\u8BF7\u5B8C\u6574\u586B\u5199\u5173\u8054\u5BA2\u6237\u4E0E\u8DDF\u8FDB\u5185\u5BB9" }, 400);
     }
     const item = await createCrmFollowup(c.env.DB, {
       customer_id: body.customer_id,
-      agent_id: body.agent_id || "system",
-      agent_name: body.agent_name || "\u5BA2\u670D",
+      agent_id: agent.id,
+      agent_name: agent.display_name,
       content: body.content.trim(),
       next_followup_time: body.next_followup_time ? Number(body.next_followup_time) : null,
       new_stage: body.new_stage || void 0
@@ -6591,6 +7018,9 @@ crmRouter.post("/crm/followups", async (c) => {
 });
 crmRouter.get("/crm/stats", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const stats = await getCrmStats(c.env.DB);
     return c.json({ success: true, data: stats });
   } catch (err) {
@@ -6969,6 +7399,9 @@ function isDomainAllowed(allowedDomains, req) {
 __name(isDomainAllowed, "isDomainAllowed");
 formsRouter.get("/admin/forms", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const list = await getAllCustomForms(c.env.DB);
     return c.json({ success: true, data: list });
   } catch (err) {
@@ -6977,6 +7410,9 @@ formsRouter.get("/admin/forms", async (c) => {
 });
 formsRouter.post("/admin/forms", async (c) => {
   try {
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
     const body = await c.req.json();
     const { key, allowed_domains, fields, style, translations_json } = body;
     if (!key) {
@@ -7010,6 +7446,9 @@ formsRouter.post("/admin/forms", async (c) => {
 });
 formsRouter.put("/admin/forms/:id", async (c) => {
   try {
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
     const id = c.req.param("id");
     const body = await c.req.json();
     const { allowed_domains, fields, style, translations_json } = body;
@@ -7035,6 +7474,9 @@ formsRouter.put("/admin/forms/:id", async (c) => {
 });
 formsRouter.delete("/admin/forms/:id", async (c) => {
   try {
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
     const id = c.req.param("id");
     await deleteCustomForm(c.env.DB, id);
     return c.json({ success: true });
@@ -7044,6 +7486,9 @@ formsRouter.delete("/admin/forms/:id", async (c) => {
 });
 formsRouter.get("/admin/forms/:key/submissions", async (c) => {
   try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
     const key = c.req.param("key");
     const list = await getFormSubmissions(c.env.DB, key);
     return c.json({ success: true, data: list });
@@ -7053,6 +7498,9 @@ formsRouter.get("/admin/forms/:key/submissions", async (c) => {
 });
 formsRouter.delete("/admin/forms/submissions/:id", async (c) => {
   try {
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
     const id = c.req.param("id");
     await deleteFormSubmission(c.env.DB, id);
     return c.json({ success: true });
@@ -7088,6 +7536,14 @@ formsRouter.get("/public/forms/:key", async (c) => {
 });
 formsRouter.post("/public/forms/:key/submit", async (c) => {
   try {
+    const rl = await enforceRateLimit({
+      key: `form-submit:${clientIp(c)}`,
+      limit: 30,
+      windowSec: 300
+    });
+    if (!rl.ok) {
+      return c.json({ success: false, message: "\u63D0\u4EA4\u8FC7\u4E8E\u9891\u7E41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5" }, 429);
+    }
     const key = c.req.param("key");
     const form = await getCustomFormByKey(c.env.DB, key);
     if (!form || form.status === "disabled") {
@@ -7754,6 +8210,13 @@ __name(deleteCmsProduct, "deleteCmsProduct");
 
 // src/worker/routes/cms.ts
 var cmsRouter = new Hono2();
+async function requireCmsAgent(c) {
+  const agent = await requireAgent(c);
+  if (isErrorResponse(agent))
+    return agent;
+  return null;
+}
+__name(requireCmsAgent, "requireCmsAgent");
 cmsRouter.get("/cms/categories", async (c) => {
   try {
     const type = c.req.query("type");
@@ -7766,6 +8229,9 @@ cmsRouter.get("/cms/categories", async (c) => {
 });
 cmsRouter.post("/admin/cms/categories", async (c) => {
   try {
+    const denied = await requireCmsAgent(c);
+    if (denied)
+      return denied;
     const body = await c.req.json();
     if (!body.slug || !body.name_json && !body.name) {
       return c.json({ status: 400, msg: "\u5206\u7C7B\u6807\u8BC6 (slug) \u4E0E\u5206\u7C7B\u540D\u79F0\u4E3A\u5FC5\u586B\u9879", data: null }, 400);
@@ -7778,6 +8244,9 @@ cmsRouter.post("/admin/cms/categories", async (c) => {
 });
 cmsRouter.put("/admin/cms/categories/:id", async (c) => {
   try {
+    const denied = await requireCmsAgent(c);
+    if (denied)
+      return denied;
     const id = c.req.param("id");
     const body = await c.req.json();
     await updateCmsCategory(c.env.DB, id, body);
@@ -7788,6 +8257,9 @@ cmsRouter.put("/admin/cms/categories/:id", async (c) => {
 });
 cmsRouter.delete("/admin/cms/categories/:id", async (c) => {
   try {
+    const denied = await requireCmsAgent(c);
+    if (denied)
+      return denied;
     const id = c.req.param("id");
     await deleteCmsCategory(c.env.DB, id);
     return c.json({ status: 200, msg: "ok", data: null }, 200);
@@ -7824,6 +8296,9 @@ cmsRouter.get("/cms/articles/:id", async (c) => {
 });
 cmsRouter.post("/admin/cms/articles", async (c) => {
   try {
+    const denied = await requireCmsAgent(c);
+    if (denied)
+      return denied;
     const body = await c.req.json();
     if (!body.slug) {
       return c.json({ status: 400, msg: "\u6587\u7AE0\u6807\u8BC6 (slug) \u4E3A\u5FC5\u586B\u9879", data: null }, 400);
@@ -7836,6 +8311,9 @@ cmsRouter.post("/admin/cms/articles", async (c) => {
 });
 cmsRouter.put("/admin/cms/articles/:id", async (c) => {
   try {
+    const denied = await requireCmsAgent(c);
+    if (denied)
+      return denied;
     const id = c.req.param("id");
     const body = await c.req.json();
     await updateCmsArticle(c.env.DB, id, body);
@@ -7846,6 +8324,9 @@ cmsRouter.put("/admin/cms/articles/:id", async (c) => {
 });
 cmsRouter.delete("/admin/cms/articles/:id", async (c) => {
   try {
+    const denied = await requireCmsAgent(c);
+    if (denied)
+      return denied;
     const id = c.req.param("id");
     await deleteCmsArticle(c.env.DB, id);
     return c.json({ status: 200, msg: "ok", data: null }, 200);
@@ -7882,6 +8363,9 @@ cmsRouter.get("/cms/products/:id", async (c) => {
 });
 cmsRouter.post("/admin/cms/products", async (c) => {
   try {
+    const denied = await requireCmsAgent(c);
+    if (denied)
+      return denied;
     const body = await c.req.json();
     if (!body.slug) {
       return c.json({ status: 400, msg: "\u4EA7\u54C1\u6807\u8BC6 (slug) \u4E3A\u5FC5\u586B\u9879", data: null }, 400);
@@ -7894,6 +8378,9 @@ cmsRouter.post("/admin/cms/products", async (c) => {
 });
 cmsRouter.put("/admin/cms/products/:id", async (c) => {
   try {
+    const denied = await requireCmsAgent(c);
+    if (denied)
+      return denied;
     const id = c.req.param("id");
     const body = await c.req.json();
     await updateCmsProduct(c.env.DB, id, body);
@@ -7904,6 +8391,9 @@ cmsRouter.put("/admin/cms/products/:id", async (c) => {
 });
 cmsRouter.delete("/admin/cms/products/:id", async (c) => {
   try {
+    const denied = await requireCmsAgent(c);
+    if (denied)
+      return denied;
     const id = c.req.param("id");
     await deleteCmsProduct(c.env.DB, id);
     return c.json({ status: 200, msg: "ok", data: null }, 200);
@@ -8301,6 +8791,7 @@ init_performance2();
 init_conversations();
 init_kbService();
 init_settings();
+init_sessionToken();
 var ChatCoordinator = class {
   ctx;
   env;
@@ -8311,6 +8802,14 @@ var ChatCoordinator = class {
   async fetch(request) {
     const url = new URL(request.url);
     const upgradeHeader = request.headers.get("Upgrade");
+    if ((url.pathname === "/broadcast-status" || url.pathname === "/broadcast-message" || url.pathname === "/broadcast-deleted") && request.method === "POST") {
+      if (!assertInternalRequest(this.env, request)) {
+        return new Response(JSON.stringify({ success: false, error: "forbidden" }), {
+          status: 403,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+    }
     if (url.pathname === "/broadcast-status" && request.method === "POST") {
       try {
         const body = await request.json();
@@ -8534,6 +9033,35 @@ var ChatCoordinator = class {
             }
           })());
         }
+      } else if (packet.type === "visitor_name_update") {
+        const name = String(packet.data?.name || "").trim().replace(/[<>]/g, "").slice(0, 64);
+        const convId = String(packet.data?.conversation_id || "").trim();
+        const tags = this.ctx.getTags(ws);
+        const role = tags.find((t) => t.startsWith("role:"))?.slice(5);
+        const uid = tags.find((t) => t.startsWith("uid:"))?.slice(4) || "";
+        const taggedCid = tags.find((t) => t.startsWith("cid:"))?.slice(4) || "";
+        if (name && convId && role === "visitor" && uid && (!taggedCid || taggedCid === convId || taggedCid.startsWith("pending_"))) {
+          try {
+            const conv = await this.env.DB.prepare(
+              "SELECT id, visitor_id FROM conversations WHERE id = ?"
+            ).bind(convId).first();
+            if (conv && conv.visitor_id === uid) {
+              await this.env.DB.prepare("UPDATE conversations SET visitor_name = ? WHERE id = ?").bind(name, convId).run();
+              this.broadcastToAgents({
+                type: "conversation_update",
+                data: { conversation_id: convId, visitor_name: name }
+              });
+              try {
+                ws.send(
+                  JSON.stringify({ type: "visitor_name_ok", data: { conversation_id: convId, name } })
+                );
+              } catch {
+              }
+            }
+          } catch (e) {
+            console.warn("[DO] visitor_name_update failed", e);
+          }
+        }
       } else if (packet.type === "read") {
         const { conversation_id, by } = packet.data || {};
         if (conversation_id && by) {
@@ -8600,9 +9128,19 @@ __name(ChatCoordinator, "ChatCoordinator");
 // src/worker/index.ts
 var app = new Hono2();
 app.use("*", cors({
-  origin: "*",
+  // 挂件可嵌任意站点：回显 Origin；无 Origin 时（同源/服务端）放行
+  origin: (origin) => origin || "*",
   allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowHeaders: ["Content-Type", "Authorization", "X-Requested-With", "x-agent-id", "x-developer-key"]
+  allowHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "x-session-token",
+    "x-visitor-id",
+    "x-visitor-token",
+    "x-developer-key",
+    "x-api-key"
+  ]
 }));
 app.route("/api/auth", authRouter);
 app.route("/api", chatRouter);
