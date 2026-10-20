@@ -1467,23 +1467,33 @@ async function getOrCreateConversation(db, visitorId, visitorName, visitorLang, 
       }
     }
     try {
+      const nextIp = geo?.ip?.trim() || null;
+      const nextCountry = geo?.country?.trim() || null;
+      const nextCity = geo?.city?.trim() || null;
+      const nextIsp = geo?.isp?.trim() || null;
+      const nextTz = geo?.timezone?.trim() || null;
       await db.prepare(
         `UPDATE conversations SET
-          ip = COALESCE(?, ip),
-          country = COALESCE(?, country),
-          city = COALESCE(?, city),
-          isp = COALESCE(?, isp),
-          timezone = COALESCE(?, timezone),
+          ip = CASE WHEN ? IS NOT NULL THEN ? ELSE ip END,
+          country = CASE WHEN ? IS NOT NULL THEN ? ELSE country END,
+          city = CASE WHEN ? IS NOT NULL THEN ? ELSE city END,
+          isp = CASE WHEN ? IS NOT NULL THEN ? ELSE isp END,
+          timezone = CASE WHEN ? IS NOT NULL THEN ? ELSE timezone END,
           page_context = COALESCE(?, page_context),
           product_snapshot = COALESCE(?, product_snapshot),
           device_info = COALESCE(?, device_info)
         WHERE id = ?`
       ).bind(
-        geo?.ip || null,
-        geo?.country || null,
-        geo?.city || null,
-        geo?.isp || null,
-        geo?.timezone || null,
+        nextIp,
+        nextIp,
+        nextCountry,
+        nextCountry,
+        nextCity,
+        nextCity,
+        nextIsp,
+        nextIsp,
+        nextTz,
+        nextTz,
         pageContextJson,
         productSnapshotJson,
         deviceInfoJson,
@@ -5138,6 +5148,105 @@ init_sessionToken();
 init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
 init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
 init_performance2();
+
+// src/worker/utils/clientGeo.ts
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+init_performance2();
+var CF_INFRA_IPS = /* @__PURE__ */ new Set([
+  "2a06:98c0:3600::103",
+  "2a06:98c0:3600::103".toLowerCase()
+]);
+function normalizeIp(raw2) {
+  if (!raw2)
+    return "";
+  let s = String(raw2).trim();
+  if (!s)
+    return "";
+  const mapped = s.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
+  if (mapped)
+    s = mapped[1];
+  if (/^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(s))
+    s = s.split(":")[0];
+  return s;
+}
+__name(normalizeIp, "normalizeIp");
+function isPrivateOrLocalIp(ip) {
+  const v = ip.toLowerCase();
+  if (!v)
+    return true;
+  if (v === "::1" || v === "0.0.0.0" || v === "127.0.0.1")
+    return true;
+  if (v.startsWith("fc") || v.startsWith("fd") || v.startsWith("fe80:"))
+    return true;
+  if (/^10\./.test(v))
+    return true;
+  if (/^127\./.test(v))
+    return true;
+  if (/^192\.168\./.test(v))
+    return true;
+  if (/^169\.254\./.test(v))
+    return true;
+  const m = v.match(/^172\.(\d+)\./);
+  if (m) {
+    const n = Number(m[1]);
+    if (n >= 16 && n <= 31)
+      return true;
+  }
+  return false;
+}
+__name(isPrivateOrLocalIp, "isPrivateOrLocalIp");
+function isUnusableClientIp(ip) {
+  const v = normalizeIp(ip);
+  if (!v)
+    return true;
+  if (CF_INFRA_IPS.has(v.toLowerCase()))
+    return true;
+  if (isPrivateOrLocalIp(v))
+    return true;
+  return false;
+}
+__name(isUnusableClientIp, "isUnusableClientIp");
+function pickFirstUsableIp(candidates) {
+  for (const c of candidates) {
+    const ip = normalizeIp(c);
+    if (ip && !isUnusableClientIp(ip))
+      return ip;
+  }
+  return "";
+}
+__name(pickFirstUsableIp, "pickFirstUsableIp");
+function parseForwardedFor(header) {
+  if (!header)
+    return [];
+  return header.split(",").map((p) => normalizeIp(p)).filter(Boolean);
+}
+__name(parseForwardedFor, "parseForwardedFor");
+function extractClientGeo(request, clientTimezoneHint) {
+  const h = request.headers;
+  const cf = request.cf;
+  const xff = parseForwardedFor(h.get("x-forwarded-for") || h.get("X-Forwarded-For"));
+  const ip = pickFirstUsableIp([
+    h.get("cf-connecting-ip"),
+    h.get("CF-Connecting-IP"),
+    h.get("true-client-ip"),
+    h.get("True-Client-IP"),
+    cf?.clientIp,
+    ...xff,
+    h.get("x-real-ip"),
+    h.get("X-Real-IP")
+  ]);
+  const countryRaw = (cf?.country && cf.country !== "XX" ? cf.country : "") || h.get("cf-ipcountry") || h.get("CF-IPCountry") || "";
+  const country = countryRaw === "T1" ? "Tor" : countryRaw;
+  const city = (cf?.city || "").trim();
+  const region = (cf?.region || "").trim();
+  const isp = (cf?.asOrganization || "").trim();
+  const timezone = (cf?.timezone || "").trim() || (clientTimezoneHint || "").trim() || "";
+  return { ip, country, city, region, isp, timezone };
+}
+__name(extractClientGeo, "extractClientGeo");
+
+// src/worker/utils/rateLimit.ts
 async function enforceRateLimit(options) {
   const { key, limit, windowSec } = options;
   const cacheKey = new Request(`https://ratelimit.internal/${encodeURIComponent(key)}`);
@@ -5166,7 +5275,12 @@ async function enforceRateLimit(options) {
 }
 __name(enforceRateLimit, "enforceRateLimit");
 function clientIp(c) {
-  return c.req.header("cf-connecting-ip") || c.req.header("x-real-ip") || "unknown";
+  if (c.req.raw) {
+    const geo = extractClientGeo(c.req.raw);
+    if (geo.ip)
+      return geo.ip;
+  }
+  return c.req.header("cf-connecting-ip") || c.req.header("true-client-ip") || c.req.header("x-real-ip") || "unknown";
 }
 __name(clientIp, "clientIp");
 
@@ -5652,18 +5766,20 @@ chatRouter.post("/visitor/init", async (c) => {
         });
       }
     }
-    const ip = c.req.header("cf-connecting-ip") || c.req.header("x-real-ip") || "";
-    const cf = c.req.raw?.cf;
-    const country = cf?.country || "";
-    const city = cf?.city || "";
-    const timezone = cf?.timezone || "";
-    const isp = cf?.asOrganization || "";
+    const clientTzHint = device_info && typeof device_info === "object" && device_info.timezone || null;
+    const geo = extractClientGeo(c.req.raw, clientTzHint);
     const { conversation, isNew } = await getOrCreateConversation(
       c.env.DB,
       visitor_id,
       visitor_name,
       visitor_lang,
-      { ip, country, city, isp, timezone },
+      {
+        ip: geo.ip || void 0,
+        country: geo.country || void 0,
+        city: geo.city || void 0,
+        isp: geo.isp || void 0,
+        timezone: geo.timezone || void 0
+      },
       { page_context, product_snapshot, device_info }
     );
     const afterTs = Number(messages_after) > 0 ? Number(messages_after) : void 0;
@@ -5718,6 +5834,38 @@ chatRouter.post("/visitor/context", async (c) => {
     const owned = await c.env.DB.prepare("SELECT id FROM conversations WHERE id = ? AND visitor_id = ?").bind(conversation_id, visitor_id).first();
     if (!owned) {
       return c.json({ success: false, message: "\u672A\u6388\u6743\uFF1A\u4F1A\u8BDD\u4E0D\u5339\u914D" }, 403);
+    }
+    const clientTzHint = device_info && typeof device_info === "object" && device_info.timezone || null;
+    const geo = extractClientGeo(c.req.raw, clientTzHint);
+    if (geo.ip || geo.country || geo.timezone) {
+      await c.env.DB.prepare(
+        `UPDATE conversations SET
+          ip = CASE WHEN ? IS NOT NULL AND ? != '' THEN ? ELSE ip END,
+          country = CASE WHEN ? IS NOT NULL AND ? != '' THEN ? ELSE country END,
+          city = CASE WHEN ? IS NOT NULL AND ? != '' THEN ? ELSE city END,
+          isp = CASE WHEN ? IS NOT NULL AND ? != '' THEN ? ELSE isp END,
+          timezone = CASE WHEN ? IS NOT NULL AND ? != '' THEN ? ELSE timezone END
+        WHERE id = ? AND visitor_id = ?`
+      ).bind(
+        geo.ip,
+        geo.ip,
+        geo.ip,
+        geo.country,
+        geo.country,
+        geo.country,
+        geo.city,
+        geo.city,
+        geo.city,
+        geo.isp,
+        geo.isp,
+        geo.isp,
+        geo.timezone,
+        geo.timezone,
+        geo.timezone,
+        conversation_id,
+        visitor_id
+      ).run().catch(() => {
+      });
     }
     const ok = await updateConversationContext(
       c.env.DB,
@@ -5876,6 +6024,8 @@ chatRouter.get("/widget/config", async (c) => {
     const button_title = await getSystemSetting(c.env.DB, "widget_button_title") || "\u5728\u7EBF\u5BA2\u670D";
     const allowed_domains = await getSystemSetting(c.env.DB, "allowed_domains") || "";
     const widget_items_json = await getSystemSetting(c.env.DB, "widget_items_json") || "";
+    const ga_enabled = await getSystemSetting(c.env.DB, "ga_enabled") === "1";
+    const ga_measurement_id = await getSystemSetting(c.env.DB, "ga_measurement_id") || "";
     const settingsMap = await getSystemSettings(c.env.DB);
     const langs = await getLanguages(c.env.DB);
     const welcome_messages = {};
@@ -5899,7 +6049,9 @@ chatRouter.get("/widget/config", async (c) => {
         allowed_domains,
         widget_items_json,
         welcome_message,
-        welcome_messages
+        welcome_messages,
+        ga_enabled,
+        ga_measurement_id: ga_enabled ? ga_measurement_id : ""
       }
     });
   } catch (err) {
@@ -6155,12 +6307,21 @@ adminRouter.get("/stats", async (c) => {
     return c.json({ success: false, message: err.message }, 500);
   }
 });
+var SETTINGS_SECRET_KEYS = /* @__PURE__ */ new Set([
+  "ga_oauth_refresh_token",
+  "ga_oauth_access_cache",
+  "ga_oauth_state"
+]);
 adminRouter.get("/settings", async (c) => {
   try {
     const agent = await requireAgent(c);
     if (isErrorResponse(agent))
       return agent;
     const data = await getSystemSettings(c.env.DB);
+    for (const k of SETTINGS_SECRET_KEYS) {
+      if (data[k])
+        data[k] = data[k] ? "__configured__" : "";
+    }
     return c.json({ success: true, data });
   } catch (err) {
     return c.json({ success: false, message: err.message }, 500);
@@ -6172,6 +6333,9 @@ adminRouter.post("/settings", async (c) => {
     if (isErrorResponse(admin))
       return admin;
     const body = await c.req.json();
+    for (const k of SETTINGS_SECRET_KEYS) {
+      delete body[k];
+    }
     await updateSystemSettings(c.env.DB, body);
     return c.json({ success: true });
   } catch (err) {
@@ -7565,16 +7729,14 @@ formsRouter.post("/public/forms/:key/submit", async (c) => {
         }
       }
     }
-    const ip = c.req.header("cf-connecting-ip") || c.req.header("x-real-ip") || "";
-    const country = c.req.raw?.cf?.country || "";
-    const city = c.req.raw?.cf?.city || "";
+    const geo = extractClientGeo(c.req.raw);
     const subId = await insertFormSubmission(c.env.DB, {
       form_key: key,
       visitor_id,
       data,
-      ip,
-      country,
-      city,
+      ip: geo.ip,
+      country: geo.country,
+      city: geo.city,
       source_url: source_url || c.req.header("referer") || ""
     });
     return c.json({
@@ -8784,6 +8946,532 @@ kbRouter.post("/admin/kb/translate", async (c) => {
   }
 });
 
+// src/worker/routes/analytics.ts
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+init_performance2();
+
+// src/worker/db/inquiryStats.ts
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+init_performance2();
+function daysToRange(days) {
+  const to = Date.now();
+  const d = Math.min(90, Math.max(1, Math.floor(days) || 7));
+  return { from: to - d * 24 * 60 * 60 * 1e3, to };
+}
+__name(daysToRange, "daysToRange");
+async function getInquiryFunnelStats(db, rangeDays = 7) {
+  const { from, to } = daysToRange(rangeDays);
+  const convRow = await db.prepare("SELECT COUNT(*) as c FROM conversations WHERE created_at >= ? AND created_at <= ?").bind(from, to).first();
+  const engagedRow = await db.prepare(
+    `SELECT COUNT(DISTINCT conversation_id) as c FROM messages
+       WHERE sender_type = 'visitor' AND created_at >= ? AND created_at <= ?`
+  ).bind(from, to).first();
+  const visitorMsgRow = await db.prepare(
+    `SELECT COUNT(*) as c FROM messages
+       WHERE sender_type = 'visitor' AND created_at >= ? AND created_at <= ?`
+  ).bind(from, to).first();
+  const ticketRow = await db.prepare(
+    `SELECT COUNT(*) as c FROM messages
+       WHERE sender_type = 'visitor'
+         AND created_at >= ? AND created_at <= ?
+         AND content LIKE '\u3010\u90AE\u4EF6\u7559\u8A00\u3011%'`
+  ).bind(from, to).first();
+  let formSubmissions = 0;
+  try {
+    const formRow = await db.prepare(
+      "SELECT COUNT(*) as c FROM form_submissions WHERE created_at >= ? AND created_at <= ?"
+    ).bind(from, to).first();
+    formSubmissions = formRow?.c || 0;
+  } catch {
+    formSubmissions = 0;
+  }
+  let crmNew = 0;
+  try {
+    const crmRow = await db.prepare(
+      "SELECT COUNT(*) as c FROM crm_customers WHERE created_at >= ? AND created_at <= ?"
+    ).bind(from, to).first();
+    crmNew = crmRow?.c || 0;
+  } catch {
+    crmNew = 0;
+  }
+  const conversations = convRow?.c || 0;
+  const engaged = engagedRow?.c || 0;
+  const tickets = ticketRow?.c || 0;
+  const inquiries = tickets + formSubmissions;
+  const recent = await db.prepare(
+    `SELECT page_context FROM conversations
+       WHERE created_at >= ? AND created_at <= ? AND page_context IS NOT NULL
+       ORDER BY created_at DESC LIMIT 500`
+  ).bind(from, to).all();
+  const utmMap = /* @__PURE__ */ new Map();
+  const landMap = /* @__PURE__ */ new Map();
+  for (const row of recent.results || []) {
+    try {
+      const pc = JSON.parse(row.page_context || "{}");
+      const src = (pc.utm_source || "").trim() || "(direct)";
+      utmMap.set(src, (utmMap.get(src) || 0) + 1);
+      if (pc.url) {
+        try {
+          const path = new URL(pc.url).pathname || "/";
+          landMap.set(path, (landMap.get(path) || 0) + 1);
+        } catch {
+        }
+      }
+    } catch {
+    }
+  }
+  const top_utm = [...utmMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([source, conversations2]) => ({ source, conversations: conversations2 }));
+  const top_landing = [...landMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([path, conversations2]) => ({ path, conversations: conversations2 }));
+  return {
+    range_days: Math.min(90, Math.max(1, Math.floor(rangeDays) || 7)),
+    from_ms: from,
+    to_ms: to,
+    conversations,
+    engaged_conversations: engaged,
+    visitor_messages: visitorMsgRow?.c || 0,
+    inquiry_tickets: tickets,
+    form_submissions: formSubmissions,
+    crm_new: crmNew,
+    engage_rate: conversations > 0 ? engaged / conversations : 0,
+    inquiry_rate: conversations > 0 ? inquiries / conversations : 0,
+    top_utm,
+    top_landing
+  };
+}
+__name(getInquiryFunnelStats, "getInquiryFunnelStats");
+
+// src/worker/routes/analytics.ts
+init_settings();
+
+// src/worker/services/gaService.ts
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+init_performance2();
+init_settings();
+var GA_REFRESH_KEY = "ga_oauth_refresh_token";
+var GA_ACCESS_CACHE_KEY = "ga_oauth_access_cache";
+function gaOAuthConfigured(env2) {
+  return Boolean((env2.GA_OAUTH_CLIENT_ID || "").trim() && (env2.GA_OAUTH_CLIENT_SECRET || "").trim());
+}
+__name(gaOAuthConfigured, "gaOAuthConfigured");
+function buildGaAuthUrl(env2, redirectUri, state) {
+  const params = new URLSearchParams({
+    client_id: (env2.GA_OAUTH_CLIENT_ID || "").trim(),
+    redirect_uri: redirectUri,
+    response_type: "code",
+    access_type: "offline",
+    prompt: "consent",
+    scope: [
+      "https://www.googleapis.com/auth/analytics.readonly",
+      "openid",
+      "email"
+    ].join(" "),
+    state
+  });
+  return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+}
+__name(buildGaAuthUrl, "buildGaAuthUrl");
+async function exchangeGaCode(env2, code, redirectUri) {
+  const body = new URLSearchParams({
+    code,
+    client_id: (env2.GA_OAUTH_CLIENT_ID || "").trim(),
+    client_secret: (env2.GA_OAUTH_CLIENT_SECRET || "").trim(),
+    redirect_uri: redirectUri,
+    grant_type: "authorization_code"
+  });
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body
+  });
+  const json = await res.json();
+  if (!res.ok) {
+    throw new Error(json.error_description || json.error || "OAuth \u6362\u7968\u5931\u8D25");
+  }
+  let email = "";
+  if (json.access_token) {
+    try {
+      const ui = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+        headers: { Authorization: `Bearer ${json.access_token}` }
+      });
+      const u = await ui.json();
+      email = u.email || "";
+    } catch {
+    }
+  }
+  return {
+    refresh_token: json.refresh_token,
+    access_token: json.access_token,
+    expires_in: Number(json.expires_in) || 3600,
+    email
+  };
+}
+__name(exchangeGaCode, "exchangeGaCode");
+async function refreshAccessToken(env2, db) {
+  const refresh = await getSystemSetting(db, GA_REFRESH_KEY);
+  if (!refresh)
+    throw new Error("\u5C1A\u672A\u8FDE\u63A5 Google \u8D26\u53F7");
+  const cachedRaw = await getSystemSetting(db, GA_ACCESS_CACHE_KEY);
+  if (cachedRaw) {
+    try {
+      const cached = JSON.parse(cachedRaw);
+      if (cached.access_token && cached.exp && cached.exp > Date.now() + 6e4) {
+        return cached.access_token;
+      }
+    } catch {
+    }
+  }
+  const body = new URLSearchParams({
+    client_id: (env2.GA_OAUTH_CLIENT_ID || "").trim(),
+    client_secret: (env2.GA_OAUTH_CLIENT_SECRET || "").trim(),
+    refresh_token: refresh,
+    grant_type: "refresh_token"
+  });
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body
+  });
+  const json = await res.json();
+  if (!res.ok) {
+    throw new Error(json.error_description || json.error || "\u5237\u65B0 Google \u4EE4\u724C\u5931\u8D25\uFF0C\u8BF7\u91CD\u65B0\u8FDE\u63A5");
+  }
+  const access = json.access_token;
+  const exp = Date.now() + (Number(json.expires_in) || 3600) * 1e3;
+  await updateSystemSettings(db, {
+    [GA_ACCESS_CACHE_KEY]: JSON.stringify({ access_token: access, exp })
+  });
+  return access;
+}
+__name(refreshAccessToken, "refreshAccessToken");
+async function disconnectGa(db) {
+  await updateSystemSettings(db, {
+    [GA_REFRESH_KEY]: "",
+    [GA_ACCESS_CACHE_KEY]: "",
+    ga_connected_email: "",
+    ga_property_id: "",
+    ga_report_enabled: "0"
+  });
+}
+__name(disconnectGa, "disconnectGa");
+async function listGaProperties(env2, db) {
+  const token = await refreshAccessToken(env2, db);
+  const res = await fetch(
+    "https://analyticsadmin.googleapis.com/v1beta/accountSummaries?pageSize=200",
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  const json = await res.json();
+  if (!res.ok) {
+    throw new Error(json.error?.message || "\u83B7\u53D6 GA \u5A92\u4F53\u8D44\u6E90\u5217\u8868\u5931\u8D25");
+  }
+  const list = [];
+  for (const acc of json.accountSummaries || []) {
+    for (const p of acc.propertySummaries || []) {
+      const name = String(p.property || "");
+      const id = name.replace(/^properties\//, "");
+      if (!id)
+        continue;
+      list.push({
+        property_id: id,
+        display_name: p.displayName || id,
+        account: acc.displayName || acc.account || ""
+      });
+    }
+  }
+  return list;
+}
+__name(listGaProperties, "listGaProperties");
+function propertyResource(propertyId) {
+  const id = propertyId.replace(/^properties\//, "").trim();
+  return `properties/${id}`;
+}
+__name(propertyResource, "propertyResource");
+async function runGaReport(env2, db, opts) {
+  const token = await refreshAccessToken(env2, db);
+  const days = Math.min(90, Math.max(1, opts.rangeDays || 7));
+  const dateRanges = [{ startDate: `${days}daysAgo`, endDate: "yesterday" }];
+  let body;
+  if (opts.kind === "overview") {
+    body = {
+      dateRanges,
+      metrics: [
+        { name: "activeUsers" },
+        { name: "sessions" },
+        { name: "screenPageViews" },
+        { name: "eventCount" }
+      ],
+      returnPropertyQuota: true
+    };
+  } else if (opts.kind === "sources") {
+    body = {
+      dateRanges,
+      dimensions: [{ name: "sessionDefaultChannelGroup" }],
+      metrics: [{ name: "sessions" }, { name: "activeUsers" }],
+      orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
+      limit: 10,
+      returnPropertyQuota: true
+    };
+  } else {
+    body = {
+      dateRanges,
+      dimensions: [{ name: "landingPagePlusQueryString" }],
+      metrics: [{ name: "sessions" }, { name: "activeUsers" }],
+      orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
+      limit: 10,
+      returnPropertyQuota: true
+    };
+  }
+  const res = await fetch(
+    `https://analyticsdata.googleapis.com/v1beta/${propertyResource(opts.propertyId)}:runReport`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    }
+  );
+  const json = await res.json();
+  if (!res.ok) {
+    const msg = json.error?.message || "GA \u62A5\u544A\u8BF7\u6C42\u5931\u8D25";
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
+  }
+  return json;
+}
+__name(runGaReport, "runGaReport");
+
+// src/worker/routes/analytics.ts
+var analyticsRouter = new Hono2();
+analyticsRouter.get("/analytics/inquiry-funnel", async (c) => {
+  try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
+    const days = Number(c.req.query("days") || "7");
+    const data = await getInquiryFunnelStats(c.env.DB, days);
+    return c.json({ success: true, data });
+  } catch (err) {
+    return c.json({ success: false, message: err.message }, 500);
+  }
+});
+analyticsRouter.get("/analytics/ga/status", async (c) => {
+  try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
+    const refresh = await getSystemSetting(c.env.DB, GA_REFRESH_KEY);
+    const propertyId = await getSystemSetting(c.env.DB, "ga_property_id") || "";
+    const email = await getSystemSetting(c.env.DB, "ga_connected_email") || "";
+    const reportEnabled = await getSystemSetting(c.env.DB, "ga_report_enabled") === "1";
+    const eventEnabled = await getSystemSetting(c.env.DB, "ga_enabled") === "1";
+    const measurementId = await getSystemSetting(c.env.DB, "ga_measurement_id") || "";
+    return c.json({
+      success: true,
+      data: {
+        oauth_configured: gaOAuthConfigured(c.env),
+        connected: Boolean(refresh),
+        email,
+        property_id: propertyId,
+        report_enabled: reportEnabled,
+        event_enabled: eventEnabled,
+        measurement_id: measurementId
+      }
+    });
+  } catch (err) {
+    return c.json({ success: false, message: err.message }, 500);
+  }
+});
+analyticsRouter.get("/analytics/ga/oauth/start", async (c) => {
+  try {
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
+    if (!gaOAuthConfigured(c.env)) {
+      return c.json({
+        success: false,
+        message: "\u90E8\u7F72\u73AF\u5883\u672A\u914D\u7F6E GA_OAUTH_CLIENT_ID / GA_OAUTH_CLIENT_SECRET\uFF0C\u65E0\u6CD5\u8FDE\u63A5 Google"
+      }, 400);
+    }
+    const origin = new URL(c.req.url).origin;
+    const redirectUri = (c.env.GA_OAUTH_REDIRECT_URI || "").trim() || `${origin}/api/analytics/ga/oauth/callback`;
+    const state = crypto.randomUUID().slice(0, 16);
+    await updateSystemSettings(c.env.DB, { ga_oauth_state: state });
+    const url = buildGaAuthUrl(c.env, redirectUri, state);
+    return c.json({ success: true, data: { url, redirect_uri: redirectUri } });
+  } catch (err) {
+    return c.json({ success: false, message: err.message }, 500);
+  }
+});
+analyticsRouter.get("/analytics/ga/oauth/callback", async (c) => {
+  const origin = new URL(c.req.url).origin;
+  const adminPathSecret = (c.env.ADMIN_PATH_SECRET || "").trim();
+  const adminBase = adminPathSecret ? `${origin}/admin-${adminPathSecret}` : origin;
+  try {
+    const err = c.req.query("error");
+    if (err) {
+      return c.redirect(`${adminBase}?ga=error&msg=${encodeURIComponent(err)}`);
+    }
+    const code = c.req.query("code") || "";
+    const state = c.req.query("state") || "";
+    const expected = await getSystemSetting(c.env.DB, "ga_oauth_state") || "";
+    if (!code || !state || state !== expected) {
+      return c.redirect(`${adminBase}?ga=error&msg=${encodeURIComponent("OAuth state \u65E0\u6548")}`);
+    }
+    if (!gaOAuthConfigured(c.env)) {
+      return c.redirect(`${adminBase}?ga=error&msg=${encodeURIComponent("\u672A\u914D\u7F6E OAuth \u5BC6\u94A5")}`);
+    }
+    const redirectUri = (c.env.GA_OAUTH_REDIRECT_URI || "").trim() || `${origin}/api/analytics/ga/oauth/callback`;
+    const tokens = await exchangeGaCode(c.env, code, redirectUri);
+    const updates = {
+      ga_oauth_state: "",
+      ga_connected_email: tokens.email || "",
+      ga_report_enabled: "1"
+    };
+    if (tokens.refresh_token) {
+      updates[GA_REFRESH_KEY] = tokens.refresh_token;
+    } else {
+      const existing = await getSystemSetting(c.env.DB, GA_REFRESH_KEY);
+      if (!existing) {
+        return c.redirect(
+          `${adminBase}?ga=error&msg=${encodeURIComponent("\u672A\u83B7\u5F97 refresh_token\uFF0C\u8BF7\u64A4\u9500\u5E94\u7528\u8BBF\u95EE\u540E\u91CD\u8BD5")}`
+        );
+      }
+    }
+    await updateSystemSettings(c.env.DB, updates);
+    return c.redirect(`${adminBase}?ga=connected#inquiry_analytics`);
+  } catch (e) {
+    return c.redirect(
+      `${adminBase}?ga=error&msg=${encodeURIComponent(e.message || "\u8FDE\u63A5\u5931\u8D25")}`
+    );
+  }
+});
+analyticsRouter.post("/analytics/ga/disconnect", async (c) => {
+  try {
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
+    await disconnectGa(c.env.DB);
+    return c.json({ success: true });
+  } catch (err) {
+    return c.json({ success: false, message: err.message }, 500);
+  }
+});
+analyticsRouter.get("/analytics/ga/properties", async (c) => {
+  try {
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
+    if (!gaOAuthConfigured(c.env)) {
+      return c.json({ success: false, message: "\u672A\u914D\u7F6E Google OAuth" }, 400);
+    }
+    const list = await listGaProperties(c.env, c.env.DB);
+    return c.json({ success: true, data: list });
+  } catch (err) {
+    return c.json({ success: false, message: err.message }, 500);
+  }
+});
+analyticsRouter.post("/analytics/ga/property", async (c) => {
+  try {
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
+    const { property_id, report_enabled } = await c.req.json();
+    const id = String(property_id || "").replace(/^properties\//, "").trim();
+    if (!id)
+      return c.json({ success: false, message: "\u8BF7\u9009\u62E9 GA4 \u5A92\u4F53\u8D44\u6E90" }, 400);
+    const updates = { ga_property_id: id };
+    if (report_enabled !== void 0) {
+      updates.ga_report_enabled = report_enabled ? "1" : "0";
+    }
+    await updateSystemSettings(c.env.DB, updates);
+    return c.json({ success: true });
+  } catch (err) {
+    return c.json({ success: false, message: err.message }, 500);
+  }
+});
+analyticsRouter.get("/analytics/ga/report", async (c) => {
+  try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
+    const reportEnabled = await getSystemSetting(c.env.DB, "ga_report_enabled") === "1";
+    if (!reportEnabled) {
+      return c.json({ success: false, message: "\u5DF2\u5173\u95ED GA \u62A5\u544A\u67E5\u770B" }, 400);
+    }
+    const propertyId = await getSystemSetting(c.env.DB, "ga_property_id") || "";
+    if (!propertyId) {
+      return c.json({ success: false, message: "\u8BF7\u5148\u9009\u62E9 GA4 \u5A92\u4F53\u8D44\u6E90" }, 400);
+    }
+    const kind = c.req.query("kind") || "overview";
+    if (!["overview", "sources", "pages"].includes(kind)) {
+      return c.json({ success: false, message: "\u65E0\u6548\u7684\u62A5\u544A\u7C7B\u578B" }, 400);
+    }
+    const days = Number(c.req.query("days") || "7");
+    const cacheKey = new Request(
+      `https://ga-cache.internal/${propertyId}/${kind}/${days}`
+    );
+    try {
+      const hit = await caches.default.match(cacheKey);
+      if (hit) {
+        const cached = await hit.json();
+        return c.json({ success: true, data: cached, cached: true });
+      }
+    } catch {
+    }
+    const raw2 = await runGaReport(c.env, c.env.DB, {
+      propertyId,
+      rangeDays: days,
+      kind
+    });
+    let data;
+    if (kind === "overview") {
+      const metrics = raw2.metricHeaders || [];
+      const values = raw2.rows?.[0]?.metricValues || [];
+      const map = {};
+      metrics.forEach((m, i) => {
+        map[m.name] = Number(values[i]?.value || 0);
+      });
+      data = {
+        kind,
+        days,
+        activeUsers: map.activeUsers || 0,
+        sessions: map.sessions || 0,
+        screenPageViews: map.screenPageViews || 0,
+        eventCount: map.eventCount || 0,
+        quota: raw2.propertyQuota || null
+      };
+    } else {
+      const rows = (raw2.rows || []).map((r) => ({
+        name: r.dimensionValues?.[0]?.value || "",
+        sessions: Number(r.metricValues?.[0]?.value || 0),
+        activeUsers: Number(r.metricValues?.[1]?.value || 0)
+      }));
+      data = { kind, days, rows, quota: raw2.propertyQuota || null };
+    }
+    try {
+      await caches.default.put(
+        cacheKey,
+        new Response(JSON.stringify(data), {
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "max-age=600"
+          }
+        })
+      );
+    } catch {
+    }
+    return c.json({ success: true, data, cached: false });
+  } catch (err) {
+    const status = err.status === 429 ? 429 : 500;
+    return c.json({ success: false, message: err.message || "GA \u62A5\u544A\u5931\u8D25" }, status);
+  }
+});
+
 // src/worker/durableObject.ts
 init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
 init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
@@ -9160,6 +9848,8 @@ app.route("/api", cmsRouter);
 app.route("/api/admin", cmsRouter);
 app.route("/api", kbRouter);
 app.route("/api/admin", kbRouter);
+app.route("/api", analyticsRouter);
+app.route("/api/admin", analyticsRouter);
 app.route("/api", uploadRouter);
 app.route("/", uploadRouter);
 app.all("/ws", async (c) => {
