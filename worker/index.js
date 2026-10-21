@@ -1086,6 +1086,7 @@ async function createAgent(db, data) {
     "offline",
     Date.now()
   ).run();
+  return id;
 }
 async function updateAgent(db, id, data) {
   if (data.password) {
@@ -1318,47 +1319,6 @@ var init_sessionToken = __esm({
   }
 });
 
-// src/worker/db/settings.ts
-async function getSystemSettings(db) {
-  const res = await db.prepare("SELECT key, value FROM settings").all();
-  const result = {
-    widget_title: "\u5728\u7EBF\u4E13\u5C5E\u5BA2\u670D",
-    welcome_message: "\u60A8\u597D\uFF01\u5F88\u9AD8\u5174\u4E3A\u60A8\u670D\u52A1\uFF0C\u8BF7\u95EE\u6709\u4EC0\u4E48\u53EF\u4EE5\u534F\u52A9\u60A8\u7684\uFF1F",
-    offline_message: "\u5F53\u524D\u5750\u5E2D\u6682\u672A\u5728\u7EBF\uFF0C\u8BF7\u76F4\u63A5\u7559\u8A00\uFF0C\u6211\u4EEC\u7A0D\u540E\u5C06\u56DE\u590D\u60A8\u3002",
-    auto_reply_enabled: "true",
-    widget_brand_color: "#07c160",
-    widget_position: "bottom-right"
-  };
-  if (res.results) {
-    for (const row of res.results) {
-      result[row.key] = row.value;
-    }
-  }
-  return result;
-}
-async function getSystemSetting(db, key) {
-  const row = await db.prepare("SELECT value FROM settings WHERE key = ?").bind(key).first();
-  return row?.value || null;
-}
-async function updateSystemSettings(db, settings) {
-  for (const [key, value] of Object.entries(settings)) {
-    await db.prepare(
-      "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
-    ).bind(key, value).run();
-  }
-}
-var init_settings = __esm({
-  "src/worker/db/settings.ts"() {
-    "use strict";
-    init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
-    init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
-    init_performance2();
-    __name(getSystemSettings, "getSystemSettings");
-    __name(getSystemSetting, "getSystemSetting");
-    __name(updateSystemSettings, "updateSystemSettings");
-  }
-});
-
 // src/shared/langSettings.ts
 function settingKeyCandidates(baseKey, langCode) {
   const code = (langCode || "").trim();
@@ -1401,6 +1361,419 @@ var init_langSettings = __esm({
   }
 });
 
+// src/worker/db/settings.ts
+async function getSystemSettings(db) {
+  const res = await db.prepare("SELECT key, value FROM settings").all();
+  const result = {
+    widget_title: "\u5728\u7EBF\u4E13\u5C5E\u5BA2\u670D",
+    welcome_message: "\u60A8\u597D\uFF01\u5F88\u9AD8\u5174\u4E3A\u60A8\u670D\u52A1\uFF0C\u8BF7\u95EE\u6709\u4EC0\u4E48\u53EF\u4EE5\u534F\u52A9\u60A8\u7684\uFF1F",
+    offline_message: "\u5F53\u524D\u5750\u5E2D\u6682\u672A\u5728\u7EBF\uFF0C\u8BF7\u76F4\u63A5\u7559\u8A00\uFF0C\u6211\u4EEC\u7A0D\u540E\u5C06\u56DE\u590D\u60A8\u3002",
+    auto_reply_enabled: "true",
+    widget_brand_color: "#07c160",
+    widget_position: "bottom-right"
+  };
+  if (res.results) {
+    for (const row of res.results) {
+      result[row.key] = row.value;
+    }
+  }
+  return result;
+}
+async function getSystemSetting(db, key) {
+  const row = await db.prepare("SELECT value FROM settings WHERE key = ?").bind(key).first();
+  return row?.value || null;
+}
+async function updateSystemSettings(db, settings) {
+  for (const [key, value] of Object.entries(settings)) {
+    await db.prepare(
+      "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+    ).bind(key, value).run();
+  }
+}
+var init_settings = __esm({
+  "src/worker/db/settings.ts"() {
+    "use strict";
+    init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+    init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+    init_performance2();
+    __name(getSystemSettings, "getSystemSettings");
+    __name(getSystemSetting, "getSystemSetting");
+    __name(updateSystemSettings, "updateSystemSettings");
+  }
+});
+
+// src/worker/db/sites.ts
+var sites_exports = {};
+__export(sites_exports, {
+  SITE_SETTING_KEYS: () => SITE_SETTING_KEYS,
+  agentCanAccessSite: () => agentCanAccessSite,
+  createSite: () => createSite,
+  deleteSite: () => deleteSite,
+  ensureSitesSchema: () => ensureSitesSchema,
+  getAgentSiteIds: () => getAgentSiteIds,
+  getMergedSiteSettings: () => getMergedSiteSettings,
+  getSiteById: () => getSiteById,
+  getSiteSettingsMap: () => getSiteSettingsMap,
+  hostFromRequest: () => hostFromRequest,
+  isSiteSettingKey: () => isSiteSettingKey,
+  listSites: () => listSites,
+  listSitesForAgent: () => listSitesForAgent,
+  normalizeHost: () => normalizeHost,
+  resolveSiteByHost: () => resolveSiteByHost,
+  resolveSiteFromRequest: () => resolveSiteFromRequest,
+  setAgentSites: () => setAgentSites,
+  updateSite: () => updateSite,
+  updateSiteSettings: () => updateSiteSettings
+});
+function isSiteSettingKey(key) {
+  if (SITE_SETTING_KEY_SET.has(key))
+    return true;
+  return key.startsWith("welcome_message_") || key.startsWith("offline_message_");
+}
+function normalizeHost(raw2) {
+  let h = (raw2 || "").trim().toLowerCase();
+  if (!h)
+    return "";
+  try {
+    if (h.includes("://"))
+      h = new URL(h).hostname;
+    else if (h.includes("/"))
+      h = h.split("/")[0];
+  } catch {
+  }
+  h = h.replace(/:\d+$/, "");
+  if (h.startsWith("www."))
+    h = h.slice(4);
+  return h;
+}
+function hostFromRequest(req, pageUrl) {
+  const origin = req.headers.get("Origin") || "";
+  if (origin) {
+    try {
+      return normalizeHost(new URL(origin).hostname);
+    } catch {
+    }
+  }
+  const referer = req.headers.get("Referer") || "";
+  if (referer) {
+    try {
+      return normalizeHost(new URL(referer).hostname);
+    } catch {
+    }
+  }
+  if (pageUrl) {
+    try {
+      return normalizeHost(new URL(pageUrl).hostname);
+    } catch {
+      return normalizeHost(pageUrl);
+    }
+  }
+  return "";
+}
+async function ensureSitesSchema(db) {
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS sites (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`
+  ).run();
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS site_hosts (
+        host TEXT PRIMARY KEY,
+        site_id TEXT NOT NULL,
+        is_primary INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      )`
+  ).run();
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS site_settings (
+        site_id TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        PRIMARY KEY (site_id, key)
+      )`
+  ).run();
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS agent_sites (
+        agent_id TEXT NOT NULL,
+        site_id TEXT NOT NULL,
+        PRIMARY KEY (agent_id, site_id)
+      )`
+  ).run();
+  try {
+    await db.prepare("ALTER TABLE conversations ADD COLUMN site_id TEXT").run();
+  } catch {
+  }
+  try {
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_conversations_site ON conversations(site_id)").run();
+  } catch {
+  }
+  try {
+    await db.prepare("ALTER TABLE custom_forms ADD COLUMN site_id TEXT").run();
+  } catch {
+  }
+  try {
+    await db.prepare("ALTER TABLE form_submissions ADD COLUMN site_id TEXT").run();
+  } catch {
+  }
+  try {
+    await db.prepare("ALTER TABLE cms_categories ADD COLUMN site_id TEXT").run();
+  } catch {
+  }
+  try {
+    await db.prepare("ALTER TABLE cms_articles ADD COLUMN site_id TEXT").run();
+  } catch {
+  }
+  try {
+    await db.prepare("ALTER TABLE cms_products ADD COLUMN site_id TEXT").run();
+  } catch {
+  }
+}
+async function attachHosts(db, sites) {
+  if (!sites.length)
+    return sites;
+  const res = await db.prepare("SELECT host, site_id, is_primary, created_at FROM site_hosts ORDER BY is_primary DESC, host ASC").all();
+  const bySite = /* @__PURE__ */ new Map();
+  for (const h of res.results || []) {
+    const list = bySite.get(h.site_id) || [];
+    list.push(h);
+    bySite.set(h.site_id, list);
+  }
+  return sites.map((s) => {
+    const hosts = bySite.get(s.id) || [];
+    const primary = hosts.find((x) => x.is_primary)?.host || hosts[0]?.host || "";
+    return { ...s, hosts, primary_host: primary };
+  });
+}
+async function listSites(db) {
+  await ensureSitesSchema(db);
+  const res = await db.prepare("SELECT * FROM sites ORDER BY created_at ASC").all();
+  return attachHosts(db, res.results || []);
+}
+async function listSitesForAgent(db, agent) {
+  const all = await listSites(db);
+  if (agent.role === "admin")
+    return all;
+  const allowed = await getAgentSiteIds(db, agent.id);
+  return all.filter((s) => allowed.has(s.id));
+}
+async function getSiteById(db, id) {
+  await ensureSitesSchema(db);
+  const row = await db.prepare("SELECT * FROM sites WHERE id = ?").bind(id).first();
+  if (!row)
+    return null;
+  const [withHosts] = await attachHosts(db, [row]);
+  return withHosts;
+}
+async function resolveSiteByHost(db, hostRaw) {
+  await ensureSitesSchema(db);
+  const host = normalizeHost(hostRaw);
+  if (!host)
+    return null;
+  const row = await db.prepare("SELECT site_id FROM site_hosts WHERE host = ?").bind(host).first();
+  if (row?.site_id) {
+    const site = await getSiteById(db, row.site_id);
+    if (site && site.status === "active")
+      return site;
+    return null;
+  }
+  if (host === "localhost" || host === "127.0.0.1") {
+    const first = await db.prepare("SELECT * FROM sites WHERE status = 'active' ORDER BY created_at ASC LIMIT 1").first();
+    if (!first)
+      return null;
+    const [withHosts] = await attachHosts(db, [first]);
+    return withHosts;
+  }
+  return null;
+}
+async function createSite(db, data) {
+  await ensureSitesSchema(db);
+  const name = data.name.trim();
+  if (!name)
+    throw new Error("\u7AD9\u70B9\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A");
+  const hosts = [...new Set(data.hosts.map(normalizeHost).filter(Boolean))];
+  if (!hosts.length)
+    throw new Error("\u81F3\u5C11\u767B\u8BB0\u4E00\u4E2A\u57DF\u540D");
+  for (const h of hosts) {
+    const taken = await db.prepare("SELECT site_id FROM site_hosts WHERE host = ?").bind(h).first();
+    if (taken)
+      throw new Error(`\u57DF\u540D ${h} \u5DF2\u5F52\u5C5E\u5176\u4ED6\u7AD9\u70B9`);
+  }
+  const id = `site_${crypto.randomUUID().slice(0, 8)}`;
+  const now = Date.now();
+  await db.prepare(
+    `INSERT INTO sites (id, name, status, created_at, updated_at) VALUES (?, ?, 'active', ?, ?)`
+  ).bind(id, name, now, now).run();
+  for (let i = 0; i < hosts.length; i++) {
+    await db.prepare(
+      `INSERT INTO site_hosts (host, site_id, is_primary, created_at) VALUES (?, ?, ?, ?)`
+    ).bind(hosts[i], id, i === 0 ? 1 : 0, now).run();
+  }
+  if (data.copy_from_site_id) {
+    const src = await getSiteSettingsMap(db, data.copy_from_site_id);
+    if (Object.keys(src).length) {
+      await updateSiteSettings(db, id, src);
+    }
+  } else {
+    await updateSiteSettings(db, id, {
+      widget_brand_color: "#07c160",
+      widget_position: "bottom-right",
+      widget_button_title: "\u5728\u7EBF\u5BA2\u670D",
+      welcome_message: "\u60A8\u597D\uFF01\u5F88\u9AD8\u5174\u4E3A\u60A8\u670D\u52A1\uFF0C\u8BF7\u95EE\u6709\u4EC0\u4E48\u53EF\u4EE5\u534F\u52A9\u60A8\u7684\uFF1F",
+      offline_message: "\u5F53\u524D\u5750\u5E2D\u6682\u672A\u5728\u7EBF\uFF0C\u8BF7\u76F4\u63A5\u7559\u8A00\uFF0C\u6211\u4EEC\u7A0D\u540E\u5C06\u56DE\u590D\u60A8\u3002",
+      auto_reply_enabled: "true"
+    });
+  }
+  const site = await getSiteById(db, id);
+  return site;
+}
+async function updateSite(db, id, data) {
+  await ensureSitesSchema(db);
+  const existing = await getSiteById(db, id);
+  if (!existing)
+    throw new Error("\u7AD9\u70B9\u4E0D\u5B58\u5728");
+  const now = Date.now();
+  if (data.name !== void 0) {
+    const name = data.name.trim();
+    if (!name)
+      throw new Error("\u7AD9\u70B9\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A");
+    await db.prepare("UPDATE sites SET name = ?, updated_at = ? WHERE id = ?").bind(name, now, id).run();
+  }
+  if (data.status !== void 0) {
+    await db.prepare("UPDATE sites SET status = ?, updated_at = ? WHERE id = ?").bind(data.status, now, id).run();
+  }
+  if (data.hosts !== void 0) {
+    const hosts = [...new Set(data.hosts.map(normalizeHost).filter(Boolean))];
+    if (!hosts.length)
+      throw new Error("\u81F3\u5C11\u767B\u8BB0\u4E00\u4E2A\u57DF\u540D");
+    for (const h of hosts) {
+      const taken = await db.prepare("SELECT site_id FROM site_hosts WHERE host = ?").bind(h).first();
+      if (taken && taken.site_id !== id) {
+        throw new Error(`\u57DF\u540D ${h} \u5DF2\u5F52\u5C5E\u5176\u4ED6\u7AD9\u70B9`);
+      }
+    }
+    await db.prepare("DELETE FROM site_hosts WHERE site_id = ?").bind(id).run();
+    for (let i = 0; i < hosts.length; i++) {
+      await db.prepare(
+        `INSERT INTO site_hosts (host, site_id, is_primary, created_at) VALUES (?, ?, ?, ?)`
+      ).bind(hosts[i], id, i === 0 ? 1 : 0, now).run();
+    }
+    await db.prepare("UPDATE sites SET updated_at = ? WHERE id = ?").bind(now, id).run();
+  }
+  const site = await getSiteById(db, id);
+  return site;
+}
+async function deleteSite(db, id) {
+  await ensureSitesSchema(db);
+  await db.prepare("DELETE FROM site_hosts WHERE site_id = ?").bind(id).run();
+  await db.prepare("DELETE FROM site_settings WHERE site_id = ?").bind(id).run();
+  await db.prepare("DELETE FROM agent_sites WHERE site_id = ?").bind(id).run();
+  await db.prepare("DELETE FROM sites WHERE id = ?").bind(id).run();
+}
+async function getSiteSettingsMap(db, siteId) {
+  await ensureSitesSchema(db);
+  const res = await db.prepare("SELECT key, value FROM site_settings WHERE site_id = ?").bind(siteId).all();
+  const map = {};
+  for (const row of res.results || [])
+    map[row.key] = row.value;
+  return map;
+}
+async function getMergedSiteSettings(db, siteId) {
+  const global = await getSystemSettings(db);
+  const site = await getSiteSettingsMap(db, siteId);
+  const merged = { ...global };
+  for (const [k, v] of Object.entries(site)) {
+    merged[k] = v;
+  }
+  return merged;
+}
+async function updateSiteSettings(db, siteId, settings) {
+  await ensureSitesSchema(db);
+  for (const [key, value] of Object.entries(settings)) {
+    if (!isSiteSettingKey(key))
+      continue;
+    await db.prepare(
+      `INSERT INTO site_settings (site_id, key, value) VALUES (?, ?, ?)
+         ON CONFLICT(site_id, key) DO UPDATE SET value = excluded.value`
+    ).bind(siteId, key, value).run();
+  }
+}
+async function getAgentSiteIds(db, agentId) {
+  await ensureSitesSchema(db);
+  const res = await db.prepare("SELECT site_id FROM agent_sites WHERE agent_id = ?").bind(agentId).all();
+  return new Set((res.results || []).map((r) => r.site_id));
+}
+async function setAgentSites(db, agentId, siteIds) {
+  await ensureSitesSchema(db);
+  await db.prepare("DELETE FROM agent_sites WHERE agent_id = ?").bind(agentId).run();
+  const uniq = [...new Set(siteIds.filter(Boolean))];
+  for (const sid of uniq) {
+    await db.prepare("INSERT INTO agent_sites (agent_id, site_id) VALUES (?, ?)").bind(agentId, sid).run();
+  }
+}
+async function agentCanAccessSite(db, agent, siteId) {
+  if (!siteId)
+    return false;
+  if (agent.role === "admin")
+    return true;
+  const ids = await getAgentSiteIds(db, agent.id);
+  return ids.has(siteId);
+}
+async function resolveSiteFromRequest(db, req, pageUrl) {
+  const host = hostFromRequest(req, pageUrl);
+  if (!host)
+    return null;
+  return resolveSiteByHost(db, host);
+}
+var SITE_SETTING_KEYS, SITE_SETTING_KEY_SET;
+var init_sites = __esm({
+  "src/worker/db/sites.ts"() {
+    "use strict";
+    init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+    init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+    init_performance2();
+    init_settings();
+    SITE_SETTING_KEYS = [
+      "widget_title",
+      "widget_brand_color",
+      "widget_position",
+      "widget_custom_icon",
+      "widget_button_title",
+      "widget_items_json",
+      "welcome_message",
+      "offline_message",
+      "auto_reply_enabled",
+      "ga_enabled",
+      "ga_measurement_id",
+      "ga_property_id",
+      "ga_report_enabled"
+    ];
+    SITE_SETTING_KEY_SET = new Set(SITE_SETTING_KEYS);
+    __name(isSiteSettingKey, "isSiteSettingKey");
+    __name(normalizeHost, "normalizeHost");
+    __name(hostFromRequest, "hostFromRequest");
+    __name(ensureSitesSchema, "ensureSitesSchema");
+    __name(attachHosts, "attachHosts");
+    __name(listSites, "listSites");
+    __name(listSitesForAgent, "listSitesForAgent");
+    __name(getSiteById, "getSiteById");
+    __name(resolveSiteByHost, "resolveSiteByHost");
+    __name(createSite, "createSite");
+    __name(updateSite, "updateSite");
+    __name(deleteSite, "deleteSite");
+    __name(getSiteSettingsMap, "getSiteSettingsMap");
+    __name(getMergedSiteSettings, "getMergedSiteSettings");
+    __name(updateSiteSettings, "updateSiteSettings");
+    __name(getAgentSiteIds, "getAgentSiteIds");
+    __name(setAgentSites, "setAgentSites");
+    __name(agentCanAccessSite, "agentCanAccessSite");
+    __name(resolveSiteFromRequest, "resolveSiteFromRequest");
+  }
+});
+
 // src/worker/db/conversations.ts
 var conversations_exports = {};
 __export(conversations_exports, {
@@ -1417,7 +1790,8 @@ __export(conversations_exports, {
   updateConversationContext: () => updateConversationContext,
   updateConversationTag: () => updateConversationTag
 });
-async function getOrCreateConversation(db, visitorId, visitorName, visitorLang, geo, contextData) {
+async function getOrCreateConversation(db, visitorId, siteId, visitorName, visitorLang, geo, contextData) {
+  await ensureSitesSchema(db);
   try {
     await db.prepare("ALTER TABLE conversations ADD COLUMN ip TEXT DEFAULT NULL").run();
     await db.prepare("ALTER TABLE conversations ADD COLUMN country TEXT DEFAULT NULL").run();
@@ -1440,12 +1814,12 @@ async function getOrCreateConversation(db, visitorId, visitorName, visitorLang, 
     )`).run();
   } catch (e) {
   }
+  if (!siteId)
+    throw new Error("\u7F3A\u5C11\u7AD9\u70B9");
   const pageContextJson = contextData?.page_context ? JSON.stringify(contextData.page_context) : null;
   const productSnapshotJson = contextData?.product_snapshot ? JSON.stringify(contextData.product_snapshot) : null;
   const deviceInfoJson = contextData?.device_info ? JSON.stringify(contextData.device_info) : null;
-  let conv = await db.prepare(
-    "SELECT * FROM conversations WHERE visitor_id = ?"
-  ).bind(visitorId).first();
+  let conv = await db.prepare("SELECT * FROM conversations WHERE visitor_id = ? AND site_id = ?").bind(visitorId, siteId).first();
   if (conv) {
     if (!conv.assigned_agent_id) {
       const allocated2 = await findLeastLoadedOnlineAgent(db);
@@ -1525,22 +1899,23 @@ async function getOrCreateConversation(db, visitorId, visitorName, visitorLang, 
   const now = Date.now();
   const name = visitorName || `\u8BBF\u5BA2_${visitorId.slice(-4)}`;
   const allocated = await findLeastLoadedOnlineAgent(db);
-  const settingsMap = await getSystemSettings(db);
+  const settingsMap = await getMergedSiteSettings(db, siteId);
   let welcomeMsg = getSettingForLang(settingsMap, "welcome_message", visitorLang || "en", "");
   if (!welcomeMsg) {
     welcomeMsg = getSettingForLang(settingsMap, "welcome_message", "en", "") || getSettingForLang(settingsMap, "welcome_message", "zh-CN", "") || settingsMap.welcome_message || DEFAULT_WELCOME_ZH;
   }
   await db.prepare(
     `INSERT INTO conversations (
-      id, visitor_id, visitor_name, group_id, status,
+      id, visitor_id, visitor_name, site_id, group_id, status,
       unread_agent_count, unread_visitor_count, last_message_text,
       last_message_time, created_at, ip, country, city, isp, timezone,
       page_context, product_snapshot, device_info, assigned_agent_id, assigned_agent_name
-    ) VALUES (?, ?, ?, 'grp_default', 'active', 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, 'grp_default', 'active', 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     id,
     visitorId,
     name,
+    siteId,
     welcomeMsg,
     now,
     now,
@@ -1631,36 +2006,33 @@ async function getVisitorJourneyLogs(db, conversationId) {
     return [];
   }
 }
-async function getConversations(db, _agentId, _isAdmin, platform2) {
+async function getConversations(db, opts) {
+  await ensureSitesSchema(db);
   try {
     await db.prepare("ALTER TABLE conversations ADD COLUMN platform TEXT DEFAULT 'web'").run();
   } catch (e) {
   }
   let sql = "SELECT * FROM conversations WHERE 1=1";
   const params = [];
-  if (platform2) {
+  if (opts?.siteId) {
+    sql += " AND site_id = ?";
+    params.push(opts.siteId);
+  }
+  if (opts?.platform) {
     sql += " AND (platform = ? OR (platform IS NULL AND ? = 'web'))";
-    params.push(platform2, platform2);
+    params.push(opts.platform, opts.platform);
   }
   sql += " ORDER BY last_message_time DESC LIMIT 150";
-  try {
-    let stmt = db.prepare(sql);
-    if (params.length > 0)
-      stmt = stmt.bind(...params);
-    const res = await stmt.all();
-    return res.results || [];
-  } catch (err) {
-    if (String(err?.message || "").includes("platform")) {
-      const fallbackSql = "SELECT * FROM conversations ORDER BY last_message_time DESC LIMIT 150";
-      const res = await db.prepare(fallbackSql).all();
-      return res.results || [];
-    }
-    throw err;
-  }
+  let stmt = db.prepare(sql);
+  if (params.length > 0)
+    stmt = stmt.bind(...params);
+  const res = await stmt.all();
+  return res.results || [];
 }
-async function getOrCreateWhatsAppConversation(db, waId, senderName) {
+async function getOrCreateWhatsAppConversation(db, waId, senderName, siteId) {
+  await ensureSitesSchema(db);
   const visitorId = `wa_${waId}`;
-  let conv = await db.prepare("SELECT * FROM conversations WHERE visitor_id = ?").bind(visitorId).first();
+  let conv = await db.prepare("SELECT * FROM conversations WHERE visitor_id = ? AND site_id = ?").bind(visitorId, siteId).first();
   const now = Date.now();
   if (conv) {
     if (senderName && conv.visitor_name !== senderName) {
@@ -1673,14 +2045,15 @@ async function getOrCreateWhatsAppConversation(db, waId, senderName) {
   const allocated = await findLeastLoadedOnlineAgent(db);
   await db.prepare(`
     INSERT INTO conversations (
-      id, visitor_id, visitor_name, group_id, status, platform,
+      id, visitor_id, visitor_name, site_id, group_id, status, platform,
       unread_agent_count, unread_visitor_count, last_message_text,
       last_message_time, created_at, assigned_agent_id, assigned_agent_name
-    ) VALUES (?, ?, ?, 'grp_default', 'active', 'whatsapp', 1, 0, 'WhatsApp \u6D88\u606F', ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, 'grp_default', 'active', 'whatsapp', 1, 0, 'WhatsApp \u6D88\u606F', ?, ?, ?, ?)
   `).bind(
     id,
     visitorId,
     senderName || `WhatsApp_${waId.slice(-4)}`,
+    siteId,
     now,
     now,
     allocated?.id || null,
@@ -1831,9 +2204,9 @@ var init_conversations = __esm({
     init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
     init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
     init_performance2();
-    init_settings();
     init_auth();
     init_langSettings();
+    init_sites();
     __name(getOrCreateConversation, "getOrCreateConversation");
     __name(updateConversationContext, "updateConversationContext");
     __name(getVisitorJourneyLogs, "getVisitorJourneyLogs");
@@ -5593,7 +5966,6 @@ __name(markConversationAsRead, "markConversationAsRead");
 
 // src/worker/routes/chat.ts
 init_auth();
-init_settings();
 
 // src/worker/db/i18n.ts
 init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
@@ -5731,6 +6103,7 @@ __name(deleteCustomKey, "deleteCustomKey");
 // src/worker/routes/chat.ts
 init_langSettings();
 init_sessionToken();
+init_sites();
 var chatRouter = new Hono2();
 chatRouter.post("/visitor/init", async (c) => {
   try {
@@ -5757,8 +6130,18 @@ chatRouter.post("/visitor/init", async (c) => {
     if (!visitor_id) {
       return c.json({ success: false, message: "\u7F3A\u5C11\u8BBF\u5BA2\u552F\u4E00\u6807\u8BC6" }, 400);
     }
+    const pageUrl = page_context && typeof page_context === "object" ? page_context.url : void 0;
+    const site = await resolveSiteFromRequest(c.env.DB, c.req.raw, pageUrl);
+    if (!site) {
+      return c.json(
+        { success: false, message: "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u4E3A\u6388\u6743\u7AD9\u70B9\uFF0C\u65E0\u6CD5\u4F7F\u7528\u5BA2\u670D" },
+        403
+      );
+    }
     if (conversation_id) {
-      const stillThere = await c.env.DB.prepare("SELECT id FROM conversations WHERE id = ?").bind(conversation_id).first();
+      const stillThere = await c.env.DB.prepare(
+        "SELECT id FROM conversations WHERE id = ? AND site_id = ?"
+      ).bind(conversation_id, site.id).first();
       if (!stillThere) {
         return c.json({
           success: true,
@@ -5771,6 +6154,7 @@ chatRouter.post("/visitor/init", async (c) => {
     const { conversation, isNew } = await getOrCreateConversation(
       c.env.DB,
       visitor_id,
+      site.id,
       visitor_name,
       visitor_lang,
       {
@@ -5897,9 +6281,15 @@ chatRouter.get("/conversations", async (c) => {
     const agent = await requireAgent(c);
     if (isErrorResponse(agent))
       return agent;
-    const platform2 = c.req.query("platform");
-    const isAdmin = agent.role === "admin";
-    const list = await getConversations(c.env.DB, agent.id, isAdmin, platform2);
+    const platform2 = c.req.query("platform") || void 0;
+    const siteId = (c.req.query("site_id") || "").trim();
+    if (!siteId) {
+      return c.json({ success: false, message: "\u8BF7\u9009\u62E9\u7AD9\u70B9\uFF08site_id\uFF09" }, 400);
+    }
+    if (!await agentCanAccessSite(c.env.DB, agent, siteId)) {
+      return c.json({ success: false, message: "\u65E0\u6743\u8BBF\u95EE\u8BE5\u7AD9\u70B9\u4F1A\u8BDD" }, 403);
+    }
+    const list = await getConversations(c.env.DB, { siteId, platform: platform2 });
     return c.json({ success: true, data: list });
   } catch (err) {
     return c.json({ success: false, message: err.message }, 500);
@@ -6018,15 +6408,23 @@ chatRouter.post("/admin/conversations/batch-cleanup", async (c) => {
 });
 chatRouter.get("/widget/config", async (c) => {
   try {
-    const brand_color = await getSystemSetting(c.env.DB, "widget_brand_color") || "#07c160";
-    const position = await getSystemSetting(c.env.DB, "widget_position") || "bottom-right";
-    const custom_icon = await getSystemSetting(c.env.DB, "widget_custom_icon") || "";
-    const button_title = await getSystemSetting(c.env.DB, "widget_button_title") || "\u5728\u7EBF\u5BA2\u670D";
-    const allowed_domains = await getSystemSetting(c.env.DB, "allowed_domains") || "";
-    const widget_items_json = await getSystemSetting(c.env.DB, "widget_items_json") || "";
-    const ga_enabled = await getSystemSetting(c.env.DB, "ga_enabled") === "1";
-    const ga_measurement_id = await getSystemSetting(c.env.DB, "ga_measurement_id") || "";
-    const settingsMap = await getSystemSettings(c.env.DB);
+    const hostHint = (c.req.query("host") || "").trim();
+    const site = hostHint ? await resolveSiteFromRequest(c.env.DB, c.req.raw, `https://${hostHint}/`) : await resolveSiteFromRequest(c.env.DB, c.req.raw);
+    if (!site) {
+      c.header("Cache-Control", "no-store");
+      return c.json(
+        { success: false, message: "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u4E3A\u6388\u6743\u7AD9\u70B9", code: "site_not_allowed" },
+        403
+      );
+    }
+    const settingsMap = await getMergedSiteSettings(c.env.DB, site.id);
+    const brand_color = settingsMap.widget_brand_color || "#07c160";
+    const position = settingsMap.widget_position || "bottom-right";
+    const custom_icon = settingsMap.widget_custom_icon || "";
+    const button_title = settingsMap.widget_button_title || "\u5728\u7EBF\u5BA2\u670D";
+    const widget_items_json = settingsMap.widget_items_json || "";
+    const ga_enabled = settingsMap.ga_enabled === "1";
+    const ga_measurement_id = settingsMap.ga_measurement_id || "";
     const langs = await getLanguages(c.env.DB);
     const welcome_messages = {};
     for (const lang of langs) {
@@ -6039,14 +6437,16 @@ chatRouter.get("/widget/config", async (c) => {
     }
     const welcome_message = welcome_messages["zh-CN"] || welcome_messages["en"] || settingsMap.welcome_message || settingsMap.welcome_message_zh || DEFAULT_WELCOME_ZH;
     c.header("Cache-Control", "public, max-age=300, s-maxage=300");
+    c.header("Vary", "Origin");
     return c.json({
       success: true,
       data: {
+        site_id: site.id,
+        site_name: site.name,
         brand_color,
         position,
         custom_icon,
         button_title,
-        allowed_domains,
         widget_items_json,
         welcome_message,
         welcome_messages,
@@ -6105,14 +6505,24 @@ chatRouter.post("/visitor/ticket", async (c) => {
 \u79F0\u547C\uFF1A${name}
 \u8054\u7CFB\u65B9\u5F0F\uFF1A${contactStr}
 \u7559\u8A00\u5185\u5BB9\uFF1A${contentStr}${extraText}${srcLine}`;
+    const site = await resolveSiteFromRequest(
+      c.env.DB,
+      c.req.raw,
+      typeof source_url === "string" ? source_url : void 0
+    );
+    if (!site) {
+      return c.json({ success: false, message: "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u4E3A\u6388\u6743\u7AD9\u70B9" }, 403);
+    }
     let convId = typeof conversation_id === "string" ? conversation_id.trim() : "";
     if (!convId || convId.startsWith("pending_")) {
-      const { conversation } = await getOrCreateConversation(c.env.DB, vid, name);
+      const { conversation } = await getOrCreateConversation(c.env.DB, vid, site.id, name);
       convId = conversation.id;
     } else {
-      const exists = await c.env.DB.prepare("SELECT id, visitor_id FROM conversations WHERE id = ?").bind(convId).first();
+      const exists = await c.env.DB.prepare(
+        "SELECT id, visitor_id FROM conversations WHERE id = ? AND site_id = ?"
+      ).bind(convId, site.id).first();
       if (!exists) {
-        const { conversation } = await getOrCreateConversation(c.env.DB, vid, name);
+        const { conversation } = await getOrCreateConversation(c.env.DB, vid, site.id, name);
         convId = conversation.id;
       }
     }
@@ -6226,17 +6636,38 @@ init_auth();
 init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
 init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
 init_performance2();
-async function getDashboardStats(db) {
-  const totalConvs = await db.prepare("SELECT COUNT(*) as c FROM conversations").first();
-  const totalMsgs = await db.prepare("SELECT COUNT(*) as c FROM messages").first();
-  const onlineAgents = await db.prepare("SELECT COUNT(*) as c FROM agents WHERE status != 'offline'").first();
+async function getDashboardStats(db, siteId) {
+  const site = (siteId || "").trim();
   const oneDayAgo = Date.now() - 24 * 60 * 60 * 1e3;
-  const recentConvs = await db.prepare("SELECT COUNT(*) as c FROM conversations WHERE created_at > ?").bind(oneDayAgo).first();
+  let totalConversations = 0;
+  let todayConversations = 0;
+  let totalMessages = 0;
+  if (site) {
+    const totalConvs = await db.prepare("SELECT COUNT(*) as c FROM conversations WHERE site_id = ?").bind(site).first();
+    totalConversations = totalConvs?.c || 0;
+    const recentConvs = await db.prepare("SELECT COUNT(*) as c FROM conversations WHERE site_id = ? AND created_at > ?").bind(site, oneDayAgo).first();
+    todayConversations = recentConvs?.c || 0;
+    const msgRow = await db.prepare(
+      `SELECT COUNT(*) as c FROM messages m
+         INNER JOIN conversations c ON c.id = m.conversation_id
+         WHERE c.site_id = ?`
+    ).bind(site).first();
+    totalMessages = msgRow?.c || 0;
+  } else {
+    const totalConvs = await db.prepare("SELECT COUNT(*) as c FROM conversations").first();
+    totalConversations = totalConvs?.c || 0;
+    const recentConvs = await db.prepare("SELECT COUNT(*) as c FROM conversations WHERE created_at > ?").bind(oneDayAgo).first();
+    todayConversations = recentConvs?.c || 0;
+    const totalMsgs = await db.prepare("SELECT COUNT(*) as c FROM messages").first();
+    totalMessages = totalMsgs?.c || 0;
+  }
+  const onlineAgents = await db.prepare("SELECT COUNT(*) as c FROM agents WHERE status != 'offline'").first();
   return {
-    totalConversations: totalConvs?.c || 0,
-    totalMessages: totalMsgs?.c || 0,
+    totalConversations,
+    totalMessages,
     onlineAgents: onlineAgents?.c || 0,
-    todayConversations: recentConvs?.c || 0
+    todayConversations,
+    site_id: site
   };
 }
 __name(getDashboardStats, "getDashboardStats");
@@ -6265,8 +6696,8 @@ adminRouter.post("/agents", async (c) => {
     if (!username || !password || !display_name) {
       return c.json({ success: false, message: "\u8BF7\u5B8C\u6574\u586B\u5199\u5458\u5DE5\u4FE1\u606F" }, 400);
     }
-    await createAgent(c.env.DB, { username, password, display_name, role });
-    return c.json({ success: true });
+    const id = await createAgent(c.env.DB, { username, password, display_name, role });
+    return c.json({ success: true, data: { id } });
   } catch (err) {
     return c.json({ success: false, message: err.message }, 400);
   }
@@ -6301,7 +6732,14 @@ adminRouter.get("/stats", async (c) => {
     const agent = await requireAgent(c);
     if (isErrorResponse(agent))
       return agent;
-    const stats = await getDashboardStats(c.env.DB);
+    const siteId = (c.req.query("site_id") || c.req.header("X-Site-Id") || "").trim();
+    if (siteId) {
+      const { agentCanAccessSite: agentCanAccessSite2 } = await Promise.resolve().then(() => (init_sites(), sites_exports));
+      if (!await agentCanAccessSite2(c.env.DB, agent, siteId)) {
+        return c.json({ success: false, message: "\u65E0\u6743\u67E5\u770B\u8BE5\u7AD9\u70B9\u7EDF\u8BA1" }, 403);
+      }
+    }
+    const stats = await getDashboardStats(c.env.DB, siteId || void 0);
     return c.json({ success: true, data: stats });
   } catch (err) {
     return c.json({ success: false, message: err.message }, 500);
@@ -7202,6 +7640,7 @@ init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
 init_performance2();
 init_settings();
 init_conversations();
+init_sites();
 var webhookRouter = new Hono2();
 webhookRouter.get("/webhook/whatsapp", async (c) => {
   const mode = c.req.query("hub.mode");
@@ -7249,7 +7688,18 @@ webhookRouter.post("/webhook/whatsapp", async (c) => {
           }
           if (!content)
             continue;
-          const conv = await getOrCreateWhatsAppConversation(c.env.DB, waId, senderName);
+          const sites = await listSites(c.env.DB);
+          const waSite = sites.find((s) => s.status === "active");
+          if (!waSite) {
+            console.warn("[Meta Webhook] \u65E0\u542F\u7528\u7AD9\u70B9\uFF0C\u4E22\u5F03 WhatsApp \u6D88\u606F");
+            continue;
+          }
+          const conv = await getOrCreateWhatsAppConversation(
+            c.env.DB,
+            waId,
+            senderName,
+            waSite.id
+          );
           await insertWhatsAppMessage(c.env.DB, conv.id, waId, senderName, content);
           console.log(`[Meta Webhook] \u6210\u529F\u63A5\u6536 WhatsApp \u7528\u6237 (+${waId}) \u7684\u65B0\u6D88\u606F\uFF1A${content}`);
         }
@@ -7313,7 +7763,8 @@ async function ensureFormTables(db) {
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS custom_forms (
       id TEXT PRIMARY KEY,
-      key TEXT UNIQUE NOT NULL,
+      key TEXT NOT NULL,
+      site_id TEXT,
       title TEXT NOT NULL,
       description TEXT,
       allowed_domains TEXT,
@@ -7329,11 +7780,16 @@ async function ensureFormTables(db) {
     await db.prepare("ALTER TABLE custom_forms ADD COLUMN translations_json TEXT").run();
   } catch {
   }
+  try {
+    await db.prepare("ALTER TABLE custom_forms ADD COLUMN site_id TEXT").run();
+  } catch {
+  }
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS form_submissions (
       id TEXT PRIMARY KEY,
       form_key TEXT NOT NULL,
       form_id TEXT,
+      site_id TEXT,
       visitor_id TEXT,
       data_json TEXT NOT NULL,
       ip TEXT,
@@ -7344,8 +7800,15 @@ async function ensureFormTables(db) {
     )
   `).run();
   try {
+    await db.prepare("ALTER TABLE form_submissions ADD COLUMN site_id TEXT").run();
+  } catch {
+  }
+  try {
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_custom_forms_key ON custom_forms(key)").run();
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_custom_forms_site ON custom_forms(site_id)").run();
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_custom_forms_site_key ON custom_forms(site_id, key)").run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_form_subs_key ON form_submissions(form_key)").run();
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_form_subs_site ON form_submissions(site_id)").run();
   } catch {
   }
 }
@@ -7395,6 +7858,7 @@ function rowToForm(r, submissionsCount = 0) {
   return {
     id: r.id,
     key: r.key,
+    site_id: r.site_id || "",
     allowed_domains: r.allowed_domains || "",
     fields,
     translations_json: translations,
@@ -7410,40 +7874,53 @@ function listTitle(translations, fallbackKey) {
   return displayFormTitle({ translations_json: translations, key: fallbackKey }, "zh-CN");
 }
 __name(listTitle, "listTitle");
-async function getAllCustomForms(db) {
+async function getAllCustomForms(db, siteId) {
   await ensureFormTables(db);
-  const rows = await db.prepare("SELECT * FROM custom_forms ORDER BY created_at DESC").all();
+  const rows = await db.prepare("SELECT * FROM custom_forms WHERE site_id = ? ORDER BY created_at DESC").bind(siteId).all();
   if (!rows.results)
     return [];
   const forms = [];
   for (const r of rows.results) {
-    const countRow = await db.prepare("SELECT COUNT(id) as count FROM form_submissions WHERE form_key = ?").bind(r.key).first();
+    const countRow = await db.prepare(
+      "SELECT COUNT(id) as count FROM form_submissions WHERE form_key = ? AND (site_id = ? OR site_id IS NULL OR site_id = '')"
+    ).bind(r.key, siteId).first();
     forms.push(rowToForm(r, countRow?.count || 0));
   }
   return forms;
 }
 __name(getAllCustomForms, "getAllCustomForms");
-async function getCustomFormByKey(db, key) {
+async function getCustomFormByKey(db, key, siteId) {
   await ensureFormTables(db);
-  const r = await db.prepare("SELECT * FROM custom_forms WHERE key = ?").bind(key).first();
+  const r = await db.prepare("SELECT * FROM custom_forms WHERE key = ? AND site_id = ?").bind(key, siteId).first();
   if (!r)
     return null;
   return rowToForm(r);
 }
 __name(getCustomFormByKey, "getCustomFormByKey");
+async function getCustomFormById(db, id) {
+  await ensureFormTables(db);
+  const r = await db.prepare("SELECT * FROM custom_forms WHERE id = ?").bind(id).first();
+  if (!r)
+    return null;
+  return rowToForm(r);
+}
+__name(getCustomFormById, "getCustomFormById");
 async function createCustomForm(db, data) {
   await ensureFormTables(db);
+  if (!data.site_id)
+    throw new Error("site_id \u4E3A\u5FC5\u586B\u9879");
   const id = `form_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 4)}`;
   const now = Date.now();
   const title2 = listTitle(data.translations_json, data.key);
   await db.prepare(`
     INSERT INTO custom_forms (
-      id, key, title, description, allowed_domains,
+      id, key, site_id, title, description, allowed_domains,
       fields_json, style_config_json, translations_json, status, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
   `).bind(
     id,
     data.key,
+    data.site_id,
     title2,
     "",
     data.allowed_domains || "",
@@ -7453,7 +7930,7 @@ async function createCustomForm(db, data) {
     now,
     now
   ).run();
-  return await getCustomFormByKey(db, data.key);
+  return await getCustomFormByKey(db, data.key, data.site_id);
 }
 __name(createCustomForm, "createCustomForm");
 async function updateCustomForm(db, id, data) {
@@ -7484,16 +7961,20 @@ async function updateCustomForm(db, id, data) {
 __name(updateCustomForm, "updateCustomForm");
 async function deleteCustomForm(db, id) {
   await ensureFormTables(db);
-  const form = await db.prepare("SELECT key FROM custom_forms WHERE id = ?").bind(id).first();
+  const form = await db.prepare("SELECT key, site_id FROM custom_forms WHERE id = ?").bind(id).first();
   if (form) {
-    await db.prepare("DELETE FROM form_submissions WHERE form_key = ?").bind(form.key).run();
+    await db.prepare("DELETE FROM form_submissions WHERE form_key = ? AND (site_id = ? OR site_id IS NULL OR site_id = '')").bind(form.key, form.site_id || "").run();
   }
   await db.prepare("DELETE FROM custom_forms WHERE id = ?").bind(id).run();
 }
 __name(deleteCustomForm, "deleteCustomForm");
-async function getFormSubmissions(db, formKey) {
+async function getFormSubmissions(db, formKey, siteId) {
   await ensureFormTables(db);
-  const rows = await db.prepare("SELECT * FROM form_submissions WHERE form_key = ? ORDER BY created_at DESC LIMIT 500").bind(formKey).all();
+  const rows = await db.prepare(
+    `SELECT * FROM form_submissions
+       WHERE form_key = ? AND (site_id = ? OR site_id IS NULL OR site_id = '')
+       ORDER BY created_at DESC LIMIT 500`
+  ).bind(formKey, siteId).all();
   if (!rows.results)
     return [];
   return rows.results.map((r) => {
@@ -7507,6 +7988,7 @@ async function getFormSubmissions(db, formKey) {
       id: r.id,
       form_key: r.form_key,
       form_id: r.form_id,
+      site_id: r.site_id || siteId,
       visitor_id: r.visitor_id,
       data,
       ip: r.ip,
@@ -7524,11 +8006,12 @@ async function insertFormSubmission(db, data) {
   const now = Date.now();
   await db.prepare(`
     INSERT INTO form_submissions (
-      id, form_key, visitor_id, data_json, ip, country, city, source_url, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, form_key, site_id, visitor_id, data_json, ip, country, city, source_url, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     id,
     data.form_key,
+    data.site_id,
     data.visitor_id || "anonymous",
     JSON.stringify(data.data),
     data.ip || "",
@@ -7547,30 +8030,25 @@ async function deleteFormSubmission(db, id) {
 __name(deleteFormSubmission, "deleteFormSubmission");
 
 // src/worker/routes/forms.ts
+init_sites();
 var formsRouter = new Hono2();
-function isDomainAllowed(allowedDomains, req) {
-  if (!allowedDomains || !allowedDomains.trim())
-    return true;
-  const origin = req.header("origin") || req.header("referer") || "";
-  if (!origin)
-    return true;
-  try {
-    const host = new URL(origin).hostname.toLowerCase();
-    if (host === "localhost" || host === "127.0.0.1")
-      return true;
-    const list = allowedDomains.split(/[\n,]+/).map((d) => d.trim().toLowerCase()).filter(Boolean);
-    return list.some((d) => host === d || host.endsWith("." + d));
-  } catch (e) {
-    return false;
-  }
+function readSiteId(c, body) {
+  return (c.req.query("site_id") || "").trim() || (c.req.header("X-Site-Id") || "").trim() || (typeof body?.site_id === "string" ? body.site_id.trim() : "");
 }
-__name(isDomainAllowed, "isDomainAllowed");
+__name(readSiteId, "readSiteId");
 formsRouter.get("/admin/forms", async (c) => {
   try {
     const agent = await requireAgent(c);
     if (isErrorResponse(agent))
       return agent;
-    const list = await getAllCustomForms(c.env.DB);
+    const siteId = readSiteId(c);
+    if (!siteId) {
+      return c.json({ success: false, message: "\u8BF7\u9009\u62E9\u7AD9\u70B9\uFF08site_id\uFF09" }, 400);
+    }
+    if (!await agentCanAccessSite(c.env.DB, agent, siteId)) {
+      return c.json({ success: false, message: "\u65E0\u6743\u8BBF\u95EE\u8BE5\u7AD9\u70B9\u8868\u5355" }, 403);
+    }
+    const list = await getAllCustomForms(c.env.DB, siteId);
     return c.json({ success: true, data: list });
   } catch (err) {
     return c.json({ success: false, message: err.message }, 500);
@@ -7582,7 +8060,14 @@ formsRouter.post("/admin/forms", async (c) => {
     if (isErrorResponse(admin))
       return admin;
     const body = await c.req.json();
-    const { key, allowed_domains, fields, style, translations_json } = body;
+    const { key, fields, style, translations_json } = body;
+    const siteId = readSiteId(c, body);
+    if (!siteId) {
+      return c.json({ success: false, message: "\u8BF7\u9009\u62E9\u7AD9\u70B9\uFF08site_id\uFF09" }, 400);
+    }
+    if (!await agentCanAccessSite(c.env.DB, admin, siteId)) {
+      return c.json({ success: false, message: "\u65E0\u6743\u5728\u8BE5\u7AD9\u70B9\u521B\u5EFA\u8868\u5355" }, 403);
+    }
     if (!key) {
       return c.json({ success: false, message: "\u8868\u5355\u8C03\u7528 Key \u4E3A\u5FC5\u586B\u9879" }, 400);
     }
@@ -7596,13 +8081,14 @@ formsRouter.post("/admin/forms", async (c) => {
       return c.json({ success: false, message: "\u8BF7\u81F3\u5C11\u586B\u5199\u4E00\u79CD\u8BED\u8A00\u7684\u8868\u5355\u6807\u9898" }, 400);
     }
     const cleanedKey = key.trim().toLowerCase().replace(/[^a-z0-9_]/g, "_");
-    const existing = await getCustomFormByKey(c.env.DB, cleanedKey);
+    const existing = await getCustomFormByKey(c.env.DB, cleanedKey, siteId);
     if (existing) {
-      return c.json({ success: false, message: `\u8C03\u7528 Key [${cleanedKey}] \u5DF2\u5B58\u5728\uFF0C\u8BF7\u66F4\u6362` }, 400);
+      return c.json({ success: false, message: `\u8C03\u7528 Key [${cleanedKey}] \u5728\u672C\u7AD9\u5DF2\u5B58\u5728\uFF0C\u8BF7\u66F4\u6362` }, 400);
     }
     const created = await createCustomForm(c.env.DB, {
       key: cleanedKey,
-      allowed_domains,
+      site_id: siteId,
+      allowed_domains: "",
       fields: fields || [],
       style: style || {},
       translations_json
@@ -7619,7 +8105,19 @@ formsRouter.put("/admin/forms/:id", async (c) => {
       return admin;
     const id = c.req.param("id");
     const body = await c.req.json();
-    const { allowed_domains, fields, style, translations_json } = body;
+    const { fields, style, translations_json } = body;
+    const siteId = readSiteId(c, body);
+    const form = await getCustomFormById(c.env.DB, id);
+    if (!form) {
+      return c.json({ success: false, message: "\u8868\u5355\u4E0D\u5B58\u5728" }, 404);
+    }
+    const effectiveSiteId = siteId || form.site_id;
+    if (!effectiveSiteId || !await agentCanAccessSite(c.env.DB, admin, effectiveSiteId)) {
+      return c.json({ success: false, message: "\u65E0\u6743\u4FEE\u6539\u8BE5\u7AD9\u70B9\u8868\u5355" }, 403);
+    }
+    if (form.site_id && siteId && form.site_id !== siteId) {
+      return c.json({ success: false, message: "\u8868\u5355\u4E0D\u5C5E\u4E8E\u5F53\u524D\u7AD9\u70B9" }, 403);
+    }
     if (!translations_json || typeof translations_json !== "object") {
       return c.json({ success: false, message: "\u8BF7\u63D0\u4F9B\u591A\u8BED\u8A00\u6587\u6848 translations_json" }, 400);
     }
@@ -7630,7 +8128,7 @@ formsRouter.put("/admin/forms/:id", async (c) => {
       return c.json({ success: false, message: "\u8BF7\u81F3\u5C11\u586B\u5199\u4E00\u79CD\u8BED\u8A00\u7684\u8868\u5355\u6807\u9898" }, 400);
     }
     await updateCustomForm(c.env.DB, id, {
-      allowed_domains,
+      allowed_domains: "",
       fields: fields || [],
       style: style || {},
       translations_json
@@ -7646,6 +8144,18 @@ formsRouter.delete("/admin/forms/:id", async (c) => {
     if (isErrorResponse(admin))
       return admin;
     const id = c.req.param("id");
+    const siteId = readSiteId(c);
+    const form = await getCustomFormById(c.env.DB, id);
+    if (!form) {
+      return c.json({ success: false, message: "\u8868\u5355\u4E0D\u5B58\u5728" }, 404);
+    }
+    const effectiveSiteId = siteId || form.site_id;
+    if (!effectiveSiteId || !await agentCanAccessSite(c.env.DB, admin, effectiveSiteId)) {
+      return c.json({ success: false, message: "\u65E0\u6743\u5220\u9664\u8BE5\u7AD9\u70B9\u8868\u5355" }, 403);
+    }
+    if (form.site_id && siteId && form.site_id !== siteId) {
+      return c.json({ success: false, message: "\u8868\u5355\u4E0D\u5C5E\u4E8E\u5F53\u524D\u7AD9\u70B9" }, 403);
+    }
     await deleteCustomForm(c.env.DB, id);
     return c.json({ success: true });
   } catch (err) {
@@ -7658,7 +8168,18 @@ formsRouter.get("/admin/forms/:key/submissions", async (c) => {
     if (isErrorResponse(agent))
       return agent;
     const key = c.req.param("key");
-    const list = await getFormSubmissions(c.env.DB, key);
+    const siteId = readSiteId(c);
+    if (!siteId) {
+      return c.json({ success: false, message: "\u8BF7\u9009\u62E9\u7AD9\u70B9\uFF08site_id\uFF09" }, 400);
+    }
+    if (!await agentCanAccessSite(c.env.DB, agent, siteId)) {
+      return c.json({ success: false, message: "\u65E0\u6743\u67E5\u770B\u8BE5\u7AD9\u70B9\u63D0\u4EA4" }, 403);
+    }
+    const form = await getCustomFormByKey(c.env.DB, key, siteId);
+    if (!form) {
+      return c.json({ success: false, message: "\u8868\u5355\u4E0D\u5B58\u5728\u6216\u4E0D\u5C5E\u4E8E\u5F53\u524D\u7AD9\u70B9" }, 404);
+    }
+    const list = await getFormSubmissions(c.env.DB, key, siteId);
     return c.json({ success: true, data: list });
   } catch (err) {
     return c.json({ success: false, message: err.message }, 500);
@@ -7679,20 +8200,19 @@ formsRouter.delete("/admin/forms/submissions/:id", async (c) => {
 formsRouter.get("/public/forms/:key", async (c) => {
   try {
     const key = c.req.param("key");
-    const form = await getCustomFormByKey(c.env.DB, key);
+    const site = await resolveSiteFromRequest(c.env.DB, c.req.raw);
+    if (!site || site.status !== "active") {
+      return c.json({ success: false, message: "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u7AD9\u70B9\uFF0C\u65E0\u6CD5\u52A0\u8F7D\u8868\u5355" }, 403);
+    }
+    const form = await getCustomFormByKey(c.env.DB, key, site.id);
     if (!form || form.status === "disabled") {
       return c.json({ success: false, message: "\u8BE5\u8868\u5355\u4E0D\u5B58\u5728\u6216\u5DF2\u505C\u7528" }, 404);
-    }
-    if (!isDomainAllowed(form.allowed_domains, c.req)) {
-      return c.json({
-        success: false,
-        message: "\u5F53\u524D\u57DF\u540D\u672A\u83B7\u5F97\u8BE5\u5728\u7EBF\u8868\u5355\u7684\u8C03\u7528\u6388\u6743\uFF0C\u8BF7\u8054\u7CFB\u7BA1\u7406\u5458\u914D\u7F6E\u5B89\u5168\u57DF\u540D\u767D\u540D\u5355"
-      }, 403);
     }
     return c.json({
       success: true,
       data: {
         key: form.key,
+        site_id: form.site_id,
         fields: form.fields,
         style: form.style,
         translations_json: form.translations_json
@@ -7713,12 +8233,13 @@ formsRouter.post("/public/forms/:key/submit", async (c) => {
       return c.json({ success: false, message: "\u63D0\u4EA4\u8FC7\u4E8E\u9891\u7E41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5" }, 429);
     }
     const key = c.req.param("key");
-    const form = await getCustomFormByKey(c.env.DB, key);
+    const site = await resolveSiteFromRequest(c.env.DB, c.req.raw);
+    if (!site || site.status !== "active") {
+      return c.json({ success: false, message: "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u7AD9\u70B9\uFF0C\u7981\u6B62\u63D0\u4EA4" }, 403);
+    }
+    const form = await getCustomFormByKey(c.env.DB, key, site.id);
     if (!form || form.status === "disabled") {
       return c.json({ success: false, message: "\u8BE5\u8868\u5355\u4E0D\u5B58\u5728\u6216\u5DF2\u505C\u7528" }, 404);
-    }
-    if (!isDomainAllowed(form.allowed_domains, c.req)) {
-      return c.json({ success: false, message: "\u5F53\u524D\u57DF\u540D\u672A\u5728\u6388\u6743\u767D\u540D\u5355\u4E2D\uFF0C\u7981\u6B62\u63D0\u4EA4" }, 403);
     }
     const body = await c.req.json();
     const { visitor_id, data, source_url } = body;
@@ -7736,6 +8257,7 @@ formsRouter.post("/public/forms/:key/submit", async (c) => {
     const geo = extractClientGeo(c.req.raw);
     const subId = await insertFormSubmission(c.env.DB, {
       form_key: key,
+      site_id: site.id,
       visitor_id,
       data,
       ip: geo.ip,
@@ -7773,6 +8295,7 @@ async function ensureCmsTables(db) {
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS cms_categories (
       id TEXT PRIMARY KEY,
+      site_id TEXT,
       type TEXT NOT NULL,
       slug TEXT NOT NULL,
       name_json TEXT NOT NULL,
@@ -7789,6 +8312,7 @@ async function ensureCmsTables(db) {
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS cms_articles (
       id TEXT PRIMARY KEY,
+      site_id TEXT,
       category_id TEXT,
       slug TEXT NOT NULL,
       cover TEXT,
@@ -7807,6 +8331,7 @@ async function ensureCmsTables(db) {
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS cms_products (
       id TEXT PRIMARY KEY,
+      site_id TEXT,
       category_id TEXT,
       slug TEXT NOT NULL,
       cover TEXT,
@@ -7841,11 +8366,20 @@ async function ensureCmsTables(db) {
     });
     await db.prepare('ALTER TABLE cms_products ADD COLUMN availability TEXT DEFAULT "in_stock"').run().catch(() => {
     });
+    await db.prepare("ALTER TABLE cms_categories ADD COLUMN site_id TEXT").run().catch(() => {
+    });
+    await db.prepare("ALTER TABLE cms_articles ADD COLUMN site_id TEXT").run().catch(() => {
+    });
+    await db.prepare("ALTER TABLE cms_products ADD COLUMN site_id TEXT").run().catch(() => {
+    });
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_cms_categories_type ON cms_categories(type)").run();
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_cms_categories_site ON cms_categories(site_id)").run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_cms_articles_category ON cms_articles(category_id)").run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_cms_articles_status ON cms_articles(status)").run();
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_cms_articles_site ON cms_articles(site_id)").run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_cms_products_category ON cms_products(category_id)").run();
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_cms_products_status ON cms_products(status)").run();
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_cms_products_site ON cms_products(site_id)").run();
   } catch (e) {
   }
 }
@@ -7868,6 +8402,7 @@ function formatCategoryRow(row, locale) {
   const displayDesc = descJson[loc] || Object.values(descJson)[0] || "";
   return {
     id: row.id,
+    site_id: row.site_id || "",
     type: row.type,
     slug: row.slug,
     name_json: nameJson,
@@ -7884,12 +8419,14 @@ function formatCategoryRow(row, locale) {
   };
 }
 __name(formatCategoryRow, "formatCategoryRow");
-async function getCmsCategories(db, type, locale) {
+async function getCmsCategories(db, type, locale, siteId) {
   await ensureCmsTables(db);
-  let sql = "SELECT * FROM cms_categories";
-  const params = [];
+  if (!siteId)
+    return [];
+  let sql = "SELECT * FROM cms_categories WHERE site_id = ?";
+  const params = [siteId];
   if (type) {
-    sql += " WHERE type = ?";
+    sql += " AND type = ?";
     params.push(type);
   }
   sql += " ORDER BY sort_order ASC, created_at DESC";
@@ -7899,8 +8436,11 @@ async function getCmsCategories(db, type, locale) {
 __name(getCmsCategories, "getCmsCategories");
 async function createCmsCategory(db, data) {
   await ensureCmsTables(db);
+  if (!data.site_id)
+    throw new Error("site_id \u4E3A\u5FC5\u586B\u9879");
   const now = Date.now();
   const id = data.id || `cat_${crypto.randomUUID()}`;
+  const siteId = data.site_id;
   const type = data.type || "article";
   const slug = (data.slug || id).trim();
   const nameJson = JSON.stringify(data.name_json || (data.name ? { "zh-CN": data.name } : {}));
@@ -7911,11 +8451,12 @@ async function createCmsCategory(db, data) {
   const seoTitle = data.seo_title || null;
   const seoDesc = data.seo_description || null;
   await db.prepare(`
-    INSERT INTO cms_categories (id, type, slug, name_json, description_json, cover, icon, sort_order, seo_title, seo_description, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(id, type, slug, nameJson, descJson, cover, icon, sortOrder, seoTitle, seoDesc, now, now).run();
+    INSERT INTO cms_categories (id, site_id, type, slug, name_json, description_json, cover, icon, sort_order, seo_title, seo_description, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(id, siteId, type, slug, nameJson, descJson, cover, icon, sortOrder, seoTitle, seoDesc, now, now).run();
   return formatCategoryRow({
     id,
+    site_id: siteId,
     type,
     slug,
     name_json: nameJson,
@@ -7990,6 +8531,7 @@ function formatArticleRow(row, categoriesMap, locale) {
   const catId = row.category_id || void 0;
   return {
     id: row.id,
+    site_id: row.site_id || "",
     category_id: catId,
     taxonomy_ids: catId ? [catId] : [],
     category: catId && categoriesMap ? categoriesMap.get(catId) : void 0,
@@ -8014,11 +8556,15 @@ function formatArticleRow(row, categoriesMap, locale) {
 __name(formatArticleRow, "formatArticleRow");
 async function getCmsArticles(db, params) {
   await ensureCmsTables(db);
+  const siteId = (params?.siteId || "").trim();
+  if (!siteId) {
+    return { list: [], pages: { total: 0, page: 1, pageSize: 20, totalPages: 0 } };
+  }
   const page = Math.max(1, Number(params?.page) || 1);
   const pageSize = Math.max(1, Math.min(100, Number(params?.pageSize || params?.limit) || 20));
   const offset = (page - 1) * pageSize;
-  const conditions = [];
-  const sqlParams = [];
+  const conditions = ["site_id = ?"];
+  const sqlParams = [siteId];
   const catId = params?.categoryId || params?.taxonomyId;
   if (catId) {
     conditions.push("category_id = ?");
@@ -8032,7 +8578,7 @@ async function getCmsArticles(db, params) {
     conditions.push("(slug LIKE ? OR translations_json LIKE ?)");
     sqlParams.push(`%${params.search}%`, `%${params.search}%`);
   }
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const whereClause = `WHERE ${conditions.join(" AND ")}`;
   const countRes = await db.prepare(`SELECT COUNT(id) as total FROM cms_articles ${whereClause}`).bind(...sqlParams).first();
   const total = countRes?.total || 0;
   const querySql = `
@@ -8042,7 +8588,7 @@ async function getCmsArticles(db, params) {
     LIMIT ? OFFSET ?
   `;
   const rowsRes = await db.prepare(querySql).bind(...sqlParams, pageSize, offset).all();
-  const categories = await getCmsCategories(db, "article", params?.locale || params?.lang);
+  const categories = await getCmsCategories(db, "article", params?.locale || params?.lang, siteId);
   const catMap = new Map(categories.map((c) => [c.id, c]));
   const list = (rowsRes.results || []).map((r) => formatArticleRow(r, catMap, params?.locale || params?.lang));
   const totalPages = total > 0 ? Math.ceil(total / pageSize) : 0;
@@ -8052,14 +8598,16 @@ async function getCmsArticles(db, params) {
   };
 }
 __name(getCmsArticles, "getCmsArticles");
-async function getCmsArticleById(db, id, locale) {
+async function getCmsArticleById(db, id, locale, siteId) {
   await ensureCmsTables(db);
-  const row = await db.prepare("SELECT * FROM cms_articles WHERE id = ? OR slug = ?").bind(id, id).first();
+  if (!siteId)
+    return null;
+  const row = await db.prepare("SELECT * FROM cms_articles WHERE (id = ? OR slug = ?) AND site_id = ?").bind(id, id, siteId).first();
   if (!row)
     return null;
   let category;
   if (row.category_id) {
-    const catRow = await db.prepare("SELECT * FROM cms_categories WHERE id = ?").bind(row.category_id).first();
+    const catRow = await db.prepare("SELECT * FROM cms_categories WHERE id = ? AND site_id = ?").bind(row.category_id, siteId).first();
     if (catRow)
       category = formatCategoryRow(catRow, locale);
   }
@@ -8068,8 +8616,11 @@ async function getCmsArticleById(db, id, locale) {
 __name(getCmsArticleById, "getCmsArticleById");
 async function createCmsArticle(db, data) {
   await ensureCmsTables(db);
+  if (!data.site_id)
+    throw new Error("site_id \u4E3A\u5FC5\u586B\u9879");
   const now = Date.now();
   const id = data.id || `art_${crypto.randomUUID()}`;
+  const siteId = data.site_id;
   const catId = data.category_id || data.taxonomy_ids && data.taxonomy_ids[0] || null;
   const slug = (data.slug || id).trim();
   const cover = data.cover || null;
@@ -8081,11 +8632,12 @@ async function createCmsArticle(db, data) {
   const seoDesc = data.seo_description || null;
   const transJson = JSON.stringify(data.translations_json || {});
   await db.prepare(`
-    INSERT INTO cms_articles (id, category_id, slug, cover, author, reading_time, status, sort_order, views_count, seo_title, seo_description, translations_json, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
-  `).bind(id, catId, slug, cover, author, readingTime, status, sortOrder, seoTitle, seoDesc, transJson, now, now).run();
+    INSERT INTO cms_articles (id, site_id, category_id, slug, cover, author, reading_time, status, sort_order, views_count, seo_title, seo_description, translations_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+  `).bind(id, siteId, catId, slug, cover, author, readingTime, status, sortOrder, seoTitle, seoDesc, transJson, now, now).run();
   return formatArticleRow({
     id,
+    site_id: siteId,
     category_id: catId,
     slug,
     cover,
@@ -8174,6 +8726,7 @@ function formatProductRow(row, categoriesMap, locale) {
   const catId = row.category_id || void 0;
   return {
     id: row.id,
+    site_id: row.site_id || "",
     category_id: catId,
     taxonomy_ids: catId ? [catId] : [],
     category: catId && categoriesMap ? categoriesMap.get(catId) : void 0,
@@ -8202,11 +8755,15 @@ function formatProductRow(row, categoriesMap, locale) {
 __name(formatProductRow, "formatProductRow");
 async function getCmsProducts(db, params) {
   await ensureCmsTables(db);
+  const siteId = (params?.siteId || "").trim();
+  if (!siteId) {
+    return { list: [], pages: { total: 0, page: 1, pageSize: 20, totalPages: 0 } };
+  }
   const page = Math.max(1, Number(params?.page) || 1);
   const pageSize = Math.max(1, Math.min(100, Number(params?.pageSize || params?.limit) || 20));
   const offset = (page - 1) * pageSize;
-  const conditions = [];
-  const sqlParams = [];
+  const conditions = ["site_id = ?"];
+  const sqlParams = [siteId];
   const catId = params?.categoryId || params?.taxonomyId;
   if (catId) {
     conditions.push("category_id = ?");
@@ -8220,7 +8777,7 @@ async function getCmsProducts(db, params) {
     conditions.push("(slug LIKE ? OR translations_json LIKE ?)");
     sqlParams.push(`%${params.search}%`, `%${params.search}%`);
   }
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const whereClause = `WHERE ${conditions.join(" AND ")}`;
   const countRes = await db.prepare(`SELECT COUNT(id) as total FROM cms_products ${whereClause}`).bind(...sqlParams).first();
   const total = countRes?.total || 0;
   const querySql = `
@@ -8230,7 +8787,7 @@ async function getCmsProducts(db, params) {
     LIMIT ? OFFSET ?
   `;
   const rowsRes = await db.prepare(querySql).bind(...sqlParams, pageSize, offset).all();
-  const categories = await getCmsCategories(db, "product", params?.locale || params?.lang);
+  const categories = await getCmsCategories(db, "product", params?.locale || params?.lang, siteId);
   const catMap = new Map(categories.map((c) => [c.id, c]));
   const list = (rowsRes.results || []).map((r) => formatProductRow(r, catMap, params?.locale || params?.lang));
   const totalPages = total > 0 ? Math.ceil(total / pageSize) : 0;
@@ -8240,14 +8797,16 @@ async function getCmsProducts(db, params) {
   };
 }
 __name(getCmsProducts, "getCmsProducts");
-async function getCmsProductById(db, id, locale) {
+async function getCmsProductById(db, id, locale, siteId) {
   await ensureCmsTables(db);
-  const row = await db.prepare("SELECT * FROM cms_products WHERE id = ? OR slug = ?").bind(id, id).first();
+  if (!siteId)
+    return null;
+  const row = await db.prepare("SELECT * FROM cms_products WHERE (id = ? OR slug = ?) AND site_id = ?").bind(id, id, siteId).first();
   if (!row)
     return null;
   let category;
   if (row.category_id) {
-    const catRow = await db.prepare("SELECT * FROM cms_categories WHERE id = ?").bind(row.category_id).first();
+    const catRow = await db.prepare("SELECT * FROM cms_categories WHERE id = ? AND site_id = ?").bind(row.category_id, siteId).first();
     if (catRow)
       category = formatCategoryRow(catRow, locale);
   }
@@ -8256,8 +8815,11 @@ async function getCmsProductById(db, id, locale) {
 __name(getCmsProductById, "getCmsProductById");
 async function createCmsProduct(db, data) {
   await ensureCmsTables(db);
+  if (!data.site_id)
+    throw new Error("site_id \u4E3A\u5FC5\u586B\u9879");
   const now = Date.now();
   const id = data.id || `prod_${crypto.randomUUID()}`;
+  const siteId = data.site_id;
   const catId = data.category_id || data.taxonomy_ids && data.taxonomy_ids[0] || null;
   const slug = (data.slug || id).trim();
   const cover = data.cover || null;
@@ -8274,11 +8836,12 @@ async function createCmsProduct(db, data) {
   const seoDesc = data.seo_description || null;
   const transJson = JSON.stringify(data.translations_json || {});
   await db.prepare(`
-    INSERT INTO cms_products (id, category_id, slug, cover, images, price, original_price, price_currency, sku, brand, availability, status, sort_order, seo_title, seo_description, translations_json, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(id, catId, slug, cover, imagesJson, price, origPrice, priceCurrency, sku, brand, availability, status, sortOrder, seoTitle, seoDesc, transJson, now, now).run();
+    INSERT INTO cms_products (id, site_id, category_id, slug, cover, images, price, original_price, price_currency, sku, brand, availability, status, sort_order, seo_title, seo_description, translations_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(id, siteId, catId, slug, cover, imagesJson, price, origPrice, priceCurrency, sku, brand, availability, status, sortOrder, seoTitle, seoDesc, transJson, now, now).run();
   return formatProductRow({
     id,
+    site_id: siteId,
     category_id: catId,
     slug,
     cover,
@@ -8375,19 +8938,62 @@ async function deleteCmsProduct(db, id) {
 __name(deleteCmsProduct, "deleteCmsProduct");
 
 // src/worker/routes/cms.ts
+init_sites();
 var cmsRouter = new Hono2();
+function readSiteId2(c, body) {
+  return (c.req.query("site_id") || "").trim() || (c.req.header("X-Site-Id") || "").trim() || (typeof body?.site_id === "string" ? body.site_id.trim() : "");
+}
+__name(readSiteId2, "readSiteId");
 async function requireCmsAgent(c) {
   const agent = await requireAgent(c);
   if (isErrorResponse(agent))
-    return agent;
-  return null;
+    return { error: agent, agent: null };
+  return { error: null, agent };
 }
 __name(requireCmsAgent, "requireCmsAgent");
+async function requireAdminSiteAccess(c, siteId) {
+  const { error: error3, agent } = await requireCmsAgent(c);
+  if (error3)
+    return error3;
+  if (!siteId) {
+    return c.json({ status: 400, msg: "\u8BF7\u9009\u62E9\u7AD9\u70B9\uFF08site_id / X-Site-Id\uFF09", data: null }, 400);
+  }
+  if (!await agentCanAccessSite(c.env.DB, agent, siteId)) {
+    return c.json({ status: 403, msg: "\u65E0\u6743\u8BBF\u95EE\u8BE5\u7AD9\u70B9\u5185\u5BB9", data: null }, 403);
+  }
+  return agent;
+}
+__name(requireAdminSiteAccess, "requireAdminSiteAccess");
+async function resolvePublicSiteId(c) {
+  const site = await resolveSiteFromRequest(c.env.DB, c.req.raw);
+  if (!site || site.status !== "active")
+    return null;
+  return site.id;
+}
+__name(resolvePublicSiteId, "resolvePublicSiteId");
 cmsRouter.get("/cms/categories", async (c) => {
   try {
+    const siteId = await resolvePublicSiteId(c);
+    if (!siteId) {
+      return c.json({ status: 403, msg: "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u7AD9\u70B9", data: null }, 403);
+    }
     const type = c.req.query("type");
     const locale = c.req.query("locale") || c.req.query("lang");
-    const list = await getCmsCategories(c.env.DB, type, locale);
+    const list = await getCmsCategories(c.env.DB, type, locale, siteId);
+    return c.json({ status: 200, msg: "ok", data: list }, 200);
+  } catch (err) {
+    return c.json({ status: 500, msg: "\u83B7\u53D6\u5206\u7C7B\u5931\u8D25: " + err.message, data: null }, 500);
+  }
+});
+cmsRouter.get("/admin/cms/categories", async (c) => {
+  try {
+    const siteId = readSiteId2(c);
+    const access = await requireAdminSiteAccess(c, siteId);
+    if (access instanceof Response)
+      return access;
+    const type = c.req.query("type");
+    const locale = c.req.query("locale") || c.req.query("lang");
+    const list = await getCmsCategories(c.env.DB, type, locale, siteId);
     return c.json({ status: 200, msg: "ok", data: list }, 200);
   } catch (err) {
     return c.json({ status: 500, msg: "\u83B7\u53D6\u5206\u7C7B\u5931\u8D25: " + err.message, data: null }, 500);
@@ -8395,14 +9001,15 @@ cmsRouter.get("/cms/categories", async (c) => {
 });
 cmsRouter.post("/admin/cms/categories", async (c) => {
   try {
-    const denied = await requireCmsAgent(c);
-    if (denied)
-      return denied;
     const body = await c.req.json();
+    const siteId = readSiteId2(c, body);
+    const access = await requireAdminSiteAccess(c, siteId);
+    if (access instanceof Response)
+      return access;
     if (!body.slug || !body.name_json && !body.name) {
       return c.json({ status: 400, msg: "\u5206\u7C7B\u6807\u8BC6 (slug) \u4E0E\u5206\u7C7B\u540D\u79F0\u4E3A\u5FC5\u586B\u9879", data: null }, 400);
     }
-    const created = await createCmsCategory(c.env.DB, body);
+    const created = await createCmsCategory(c.env.DB, { ...body, site_id: siteId });
     return c.json({ status: 200, msg: "ok", data: created }, 200);
   } catch (err) {
     return c.json({ status: 500, msg: "\u521B\u5EFA\u5206\u7C7B\u5931\u8D25: " + err.message, data: null }, 500);
@@ -8410,9 +9017,10 @@ cmsRouter.post("/admin/cms/categories", async (c) => {
 });
 cmsRouter.put("/admin/cms/categories/:id", async (c) => {
   try {
-    const denied = await requireCmsAgent(c);
-    if (denied)
-      return denied;
+    const siteId = readSiteId2(c);
+    const access = await requireAdminSiteAccess(c, siteId);
+    if (access instanceof Response)
+      return access;
     const id = c.req.param("id");
     const body = await c.req.json();
     await updateCmsCategory(c.env.DB, id, body);
@@ -8423,9 +9031,10 @@ cmsRouter.put("/admin/cms/categories/:id", async (c) => {
 });
 cmsRouter.delete("/admin/cms/categories/:id", async (c) => {
   try {
-    const denied = await requireCmsAgent(c);
-    if (denied)
-      return denied;
+    const siteId = readSiteId2(c);
+    const access = await requireAdminSiteAccess(c, siteId);
+    if (access instanceof Response)
+      return access;
     const id = c.req.param("id");
     await deleteCmsCategory(c.env.DB, id);
     return c.json({ status: 200, msg: "ok", data: null }, 200);
@@ -8435,13 +9044,51 @@ cmsRouter.delete("/admin/cms/categories/:id", async (c) => {
 });
 cmsRouter.get("/cms/articles", async (c) => {
   try {
+    const siteId = await resolvePublicSiteId(c);
+    if (!siteId) {
+      return c.json({ status: 403, msg: "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u7AD9\u70B9", data: null }, 403);
+    }
     const categoryId = c.req.query("categoryId") || c.req.query("taxonomyId");
     const status = c.req.query("status");
     const locale = c.req.query("locale") || c.req.query("lang");
     const search = c.req.query("search");
     const page = Number(c.req.query("page")) || 1;
     const pageSize = Number(c.req.query("pageSize") || c.req.query("limit")) || 20;
-    const result = await getCmsArticles(c.env.DB, { categoryId, status, locale, search, page, pageSize });
+    const result = await getCmsArticles(c.env.DB, {
+      siteId,
+      categoryId,
+      status,
+      locale,
+      search,
+      page,
+      pageSize
+    });
+    return c.json({ status: 200, msg: "ok", data: result }, 200);
+  } catch (err) {
+    return c.json({ status: 500, msg: "\u83B7\u53D6\u6587\u7AE0\u5217\u8868\u5931\u8D25: " + err.message, data: null }, 500);
+  }
+});
+cmsRouter.get("/admin/cms/articles", async (c) => {
+  try {
+    const siteId = readSiteId2(c);
+    const access = await requireAdminSiteAccess(c, siteId);
+    if (access instanceof Response)
+      return access;
+    const categoryId = c.req.query("categoryId") || c.req.query("taxonomyId");
+    const status = c.req.query("status");
+    const locale = c.req.query("locale") || c.req.query("lang");
+    const search = c.req.query("search");
+    const page = Number(c.req.query("page")) || 1;
+    const pageSize = Number(c.req.query("pageSize") || c.req.query("limit")) || 20;
+    const result = await getCmsArticles(c.env.DB, {
+      siteId,
+      categoryId,
+      status,
+      locale,
+      search,
+      page,
+      pageSize
+    });
     return c.json({ status: 200, msg: "ok", data: result }, 200);
   } catch (err) {
     return c.json({ status: 500, msg: "\u83B7\u53D6\u6587\u7AE0\u5217\u8868\u5931\u8D25: " + err.message, data: null }, 500);
@@ -8449,9 +9096,30 @@ cmsRouter.get("/cms/articles", async (c) => {
 });
 cmsRouter.get("/cms/articles/:id", async (c) => {
   try {
+    const siteId = await resolvePublicSiteId(c);
+    if (!siteId) {
+      return c.json({ status: 403, msg: "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u7AD9\u70B9", data: null }, 403);
+    }
     const id = c.req.param("id");
     const locale = c.req.query("locale") || c.req.query("lang");
-    const article = await getCmsArticleById(c.env.DB, id, locale);
+    const article = await getCmsArticleById(c.env.DB, id, locale, siteId);
+    if (!article) {
+      return c.json({ status: 404, msg: "\u6587\u7AE0\u4E0D\u5B58\u5728", data: null }, 404);
+    }
+    return c.json({ status: 200, msg: "ok", data: article }, 200);
+  } catch (err) {
+    return c.json({ status: 500, msg: "\u83B7\u53D6\u6587\u7AE0\u8BE6\u60C5\u5931\u8D25: " + err.message, data: null }, 500);
+  }
+});
+cmsRouter.get("/admin/cms/articles/:id", async (c) => {
+  try {
+    const siteId = readSiteId2(c);
+    const access = await requireAdminSiteAccess(c, siteId);
+    if (access instanceof Response)
+      return access;
+    const id = c.req.param("id");
+    const locale = c.req.query("locale") || c.req.query("lang");
+    const article = await getCmsArticleById(c.env.DB, id, locale, siteId);
     if (!article) {
       return c.json({ status: 404, msg: "\u6587\u7AE0\u4E0D\u5B58\u5728", data: null }, 404);
     }
@@ -8462,14 +9130,15 @@ cmsRouter.get("/cms/articles/:id", async (c) => {
 });
 cmsRouter.post("/admin/cms/articles", async (c) => {
   try {
-    const denied = await requireCmsAgent(c);
-    if (denied)
-      return denied;
     const body = await c.req.json();
+    const siteId = readSiteId2(c, body);
+    const access = await requireAdminSiteAccess(c, siteId);
+    if (access instanceof Response)
+      return access;
     if (!body.slug) {
       return c.json({ status: 400, msg: "\u6587\u7AE0\u6807\u8BC6 (slug) \u4E3A\u5FC5\u586B\u9879", data: null }, 400);
     }
-    const created = await createCmsArticle(c.env.DB, body);
+    const created = await createCmsArticle(c.env.DB, { ...body, site_id: siteId });
     return c.json({ status: 200, msg: "ok", data: created }, 200);
   } catch (err) {
     return c.json({ status: 500, msg: "\u521B\u5EFA\u6587\u7AE0\u5931\u8D25: " + err.message, data: null }, 500);
@@ -8477,9 +9146,10 @@ cmsRouter.post("/admin/cms/articles", async (c) => {
 });
 cmsRouter.put("/admin/cms/articles/:id", async (c) => {
   try {
-    const denied = await requireCmsAgent(c);
-    if (denied)
-      return denied;
+    const siteId = readSiteId2(c);
+    const access = await requireAdminSiteAccess(c, siteId);
+    if (access instanceof Response)
+      return access;
     const id = c.req.param("id");
     const body = await c.req.json();
     await updateCmsArticle(c.env.DB, id, body);
@@ -8490,9 +9160,10 @@ cmsRouter.put("/admin/cms/articles/:id", async (c) => {
 });
 cmsRouter.delete("/admin/cms/articles/:id", async (c) => {
   try {
-    const denied = await requireCmsAgent(c);
-    if (denied)
-      return denied;
+    const siteId = readSiteId2(c);
+    const access = await requireAdminSiteAccess(c, siteId);
+    if (access instanceof Response)
+      return access;
     const id = c.req.param("id");
     await deleteCmsArticle(c.env.DB, id);
     return c.json({ status: 200, msg: "ok", data: null }, 200);
@@ -8502,13 +9173,51 @@ cmsRouter.delete("/admin/cms/articles/:id", async (c) => {
 });
 cmsRouter.get("/cms/products", async (c) => {
   try {
+    const siteId = await resolvePublicSiteId(c);
+    if (!siteId) {
+      return c.json({ status: 403, msg: "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u7AD9\u70B9", data: null }, 403);
+    }
     const categoryId = c.req.query("categoryId") || c.req.query("taxonomyId");
     const status = c.req.query("status");
     const locale = c.req.query("locale") || c.req.query("lang");
     const search = c.req.query("search");
     const page = Number(c.req.query("page")) || 1;
     const pageSize = Number(c.req.query("pageSize") || c.req.query("limit")) || 20;
-    const result = await getCmsProducts(c.env.DB, { categoryId, status, locale, search, page, pageSize });
+    const result = await getCmsProducts(c.env.DB, {
+      siteId,
+      categoryId,
+      status,
+      locale,
+      search,
+      page,
+      pageSize
+    });
+    return c.json({ status: 200, msg: "ok", data: result }, 200);
+  } catch (err) {
+    return c.json({ status: 500, msg: "\u83B7\u53D6\u4EA7\u54C1\u5217\u8868\u5931\u8D25: " + err.message, data: null }, 500);
+  }
+});
+cmsRouter.get("/admin/cms/products", async (c) => {
+  try {
+    const siteId = readSiteId2(c);
+    const access = await requireAdminSiteAccess(c, siteId);
+    if (access instanceof Response)
+      return access;
+    const categoryId = c.req.query("categoryId") || c.req.query("taxonomyId");
+    const status = c.req.query("status");
+    const locale = c.req.query("locale") || c.req.query("lang");
+    const search = c.req.query("search");
+    const page = Number(c.req.query("page")) || 1;
+    const pageSize = Number(c.req.query("pageSize") || c.req.query("limit")) || 20;
+    const result = await getCmsProducts(c.env.DB, {
+      siteId,
+      categoryId,
+      status,
+      locale,
+      search,
+      page,
+      pageSize
+    });
     return c.json({ status: 200, msg: "ok", data: result }, 200);
   } catch (err) {
     return c.json({ status: 500, msg: "\u83B7\u53D6\u4EA7\u54C1\u5217\u8868\u5931\u8D25: " + err.message, data: null }, 500);
@@ -8516,9 +9225,30 @@ cmsRouter.get("/cms/products", async (c) => {
 });
 cmsRouter.get("/cms/products/:id", async (c) => {
   try {
+    const siteId = await resolvePublicSiteId(c);
+    if (!siteId) {
+      return c.json({ status: 403, msg: "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u7AD9\u70B9", data: null }, 403);
+    }
     const id = c.req.param("id");
     const locale = c.req.query("locale") || c.req.query("lang");
-    const product = await getCmsProductById(c.env.DB, id, locale);
+    const product = await getCmsProductById(c.env.DB, id, locale, siteId);
+    if (!product) {
+      return c.json({ status: 404, msg: "\u4EA7\u54C1\u4E0D\u5B58\u5728", data: null }, 404);
+    }
+    return c.json({ status: 200, msg: "ok", data: product }, 200);
+  } catch (err) {
+    return c.json({ status: 500, msg: "\u83B7\u53D6\u4EA7\u54C1\u8BE6\u60C5\u5931\u8D25: " + err.message, data: null }, 500);
+  }
+});
+cmsRouter.get("/admin/cms/products/:id", async (c) => {
+  try {
+    const siteId = readSiteId2(c);
+    const access = await requireAdminSiteAccess(c, siteId);
+    if (access instanceof Response)
+      return access;
+    const id = c.req.param("id");
+    const locale = c.req.query("locale") || c.req.query("lang");
+    const product = await getCmsProductById(c.env.DB, id, locale, siteId);
     if (!product) {
       return c.json({ status: 404, msg: "\u4EA7\u54C1\u4E0D\u5B58\u5728", data: null }, 404);
     }
@@ -8529,14 +9259,15 @@ cmsRouter.get("/cms/products/:id", async (c) => {
 });
 cmsRouter.post("/admin/cms/products", async (c) => {
   try {
-    const denied = await requireCmsAgent(c);
-    if (denied)
-      return denied;
     const body = await c.req.json();
+    const siteId = readSiteId2(c, body);
+    const access = await requireAdminSiteAccess(c, siteId);
+    if (access instanceof Response)
+      return access;
     if (!body.slug) {
       return c.json({ status: 400, msg: "\u4EA7\u54C1\u6807\u8BC6 (slug) \u4E3A\u5FC5\u586B\u9879", data: null }, 400);
     }
-    const created = await createCmsProduct(c.env.DB, body);
+    const created = await createCmsProduct(c.env.DB, { ...body, site_id: siteId });
     return c.json({ status: 200, msg: "ok", data: created }, 200);
   } catch (err) {
     return c.json({ status: 500, msg: "\u521B\u5EFA\u4EA7\u54C1\u5931\u8D25: " + err.message, data: null }, 500);
@@ -8544,9 +9275,10 @@ cmsRouter.post("/admin/cms/products", async (c) => {
 });
 cmsRouter.put("/admin/cms/products/:id", async (c) => {
   try {
-    const denied = await requireCmsAgent(c);
-    if (denied)
-      return denied;
+    const siteId = readSiteId2(c);
+    const access = await requireAdminSiteAccess(c, siteId);
+    if (access instanceof Response)
+      return access;
     const id = c.req.param("id");
     const body = await c.req.json();
     await updateCmsProduct(c.env.DB, id, body);
@@ -8557,9 +9289,10 @@ cmsRouter.put("/admin/cms/products/:id", async (c) => {
 });
 cmsRouter.delete("/admin/cms/products/:id", async (c) => {
   try {
-    const denied = await requireCmsAgent(c);
-    if (denied)
-      return denied;
+    const siteId = readSiteId2(c);
+    const access = await requireAdminSiteAccess(c, siteId);
+    if (access instanceof Response)
+      return access;
     const id = c.req.param("id");
     await deleteCmsProduct(c.env.DB, id);
     return c.json({ status: 200, msg: "ok", data: null }, 200);
@@ -8959,62 +9692,56 @@ init_performance2();
 init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
 init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
 init_performance2();
+init_sites();
 function daysToRange(days) {
   const to = Date.now();
   const d = Math.min(90, Math.max(1, Math.floor(days) || 7));
   return { from: to - d * 24 * 60 * 60 * 1e3, to };
 }
 __name(daysToRange, "daysToRange");
-function hostFromUrl(url) {
-  if (!url)
-    return "";
-  try {
-    return new URL(url).hostname.toLowerCase().replace(/^www\./, "");
-  } catch {
-    return "";
-  }
-}
-__name(hostFromUrl, "hostFromUrl");
-function normalizeSiteFilter(site) {
-  return (site || "").trim().toLowerCase().replace(/^www\./, "");
-}
-__name(normalizeSiteFilter, "normalizeSiteFilter");
-async function getInquiryFunnelStats(db, rangeDays = 7, siteFilter) {
+async function getInquiryFunnelStats(db, rangeDays = 7, siteIdFilter) {
+  await ensureSitesSchema(db);
   const { from, to } = daysToRange(rangeDays);
-  const site = normalizeSiteFilter(siteFilter);
+  const siteId = (siteIdFilter || "").trim();
   const recent = await db.prepare(
-    `SELECT id, page_context FROM conversations
+    `SELECT id, site_id, page_context FROM conversations
        WHERE created_at >= ? AND created_at <= ?
        ORDER BY created_at DESC LIMIT 2000`
   ).bind(from, to).all();
   const rows = recent.results || [];
-  const siteMap = /* @__PURE__ */ new Map();
+  const siteCount = /* @__PURE__ */ new Map();
   const matchedIds = [];
   const matchedContexts = [];
   for (const row of rows) {
-    let host = "(unknown)";
-    let pc = {};
-    if (row.page_context) {
-      try {
-        pc = JSON.parse(row.page_context);
-        host = hostFromUrl(pc.url) || "(unknown)";
-      } catch {
+    const sid = row.site_id || "";
+    if (sid)
+      siteCount.set(sid, (siteCount.get(sid) || 0) + 1);
+    if (!siteId || sid === siteId) {
+      matchedIds.push(row.id);
+      if (row.page_context) {
+        try {
+          matchedContexts.push(JSON.parse(row.page_context));
+        } catch {
+          matchedContexts.push({});
+        }
+      } else {
+        matchedContexts.push({});
       }
     }
-    siteMap.set(host, (siteMap.get(host) || 0) + 1);
-    if (!site || host === site) {
-      matchedIds.push(row.id);
-      matchedContexts.push(pc);
-    }
   }
-  const sites = [...siteMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([host, conversations2]) => ({ host, conversations: conversations2 }));
+  const allSites = await listSites(db);
+  const sites = allSites.map((s) => ({
+    id: s.id,
+    name: s.name,
+    conversations: siteCount.get(s.id) || 0
+  })).sort((a, b) => b.conversations - a.conversations);
   let conversations = 0;
   let engaged = 0;
   let visitorMessages = 0;
   let tickets = 0;
   let formSubmissions = 0;
   let crmNew = 0;
-  if (!site) {
+  if (!siteId) {
     const convRow = await db.prepare("SELECT COUNT(*) as c FROM conversations WHERE created_at >= ? AND created_at <= ?").bind(from, to).first();
     conversations = convRow?.c || 0;
     const engagedRow = await db.prepare(
@@ -9079,12 +9806,11 @@ async function getInquiryFunnelStats(db, rangeDays = 7, siteFilter) {
       }
     }
     try {
-      const formRows = await db.prepare(
-        "SELECT source_url FROM form_submissions WHERE created_at >= ? AND created_at <= ? LIMIT 2000"
-      ).bind(from, to).all();
-      formSubmissions = (formRows.results || []).filter(
-        (r) => hostFromUrl(r.source_url) === site
-      ).length;
+      const formRow = await db.prepare(
+        `SELECT COUNT(*) as c FROM form_submissions
+           WHERE site_id = ? AND created_at >= ? AND created_at <= ?`
+      ).bind(siteId, from, to).first();
+      formSubmissions = formRow?.c || 0;
     } catch {
       formSubmissions = 0;
     }
@@ -9108,7 +9834,7 @@ async function getInquiryFunnelStats(db, rangeDays = 7, siteFilter) {
     range_days: Math.min(90, Math.max(1, Math.floor(rangeDays) || 7)),
     from_ms: from,
     to_ms: to,
-    site,
+    site_id: siteId,
     sites,
     conversations,
     engaged_conversations: engaged,
@@ -9126,6 +9852,7 @@ __name(getInquiryFunnelStats, "getInquiryFunnelStats");
 
 // src/worker/routes/analytics.ts
 init_settings();
+init_sites();
 
 // src/worker/services/gaService.ts
 init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
@@ -9358,14 +10085,18 @@ __name(runGaReport, "runGaReport");
 
 // src/worker/routes/analytics.ts
 var analyticsRouter = new Hono2();
+function readSiteId3(c, body) {
+  return (c.req.query("site_id") || "").trim() || (c.req.header("X-Site-Id") || "").trim() || (typeof body?.site_id === "string" ? body.site_id.trim() : "");
+}
+__name(readSiteId3, "readSiteId");
 analyticsRouter.get("/analytics/inquiry-funnel", async (c) => {
   try {
     const agent = await requireAgent(c);
     if (isErrorResponse(agent))
       return agent;
     const days = Number(c.req.query("days") || "7");
-    const site = (c.req.query("site") || "").trim();
-    const data = await getInquiryFunnelStats(c.env.DB, days, site || void 0);
+    const siteId = (c.req.query("site_id") || c.req.query("site") || "").trim();
+    const data = await getInquiryFunnelStats(c.env.DB, days, siteId || void 0);
     return c.json({ success: true, data });
   } catch (err) {
     return c.json({ success: false, message: err.message }, 500);
@@ -9376,19 +10107,31 @@ analyticsRouter.get("/analytics/ga/status", async (c) => {
     const agent = await requireAgent(c);
     if (isErrorResponse(agent))
       return agent;
+    const siteId = readSiteId3(c);
+    if (siteId && !await agentCanAccessSite(c.env.DB, agent, siteId)) {
+      return c.json({ success: false, message: "\u65E0\u6743\u8BBF\u95EE\u8BE5\u7AD9\u70B9" }, 403);
+    }
     const refresh = await getSystemSetting(c.env.DB, GA_REFRESH_KEY);
-    const propertyId = await getSystemSetting(c.env.DB, "ga_property_id") || "";
     const email = await getSystemSetting(c.env.DB, "ga_connected_email") || "";
-    const reportEnabled = await getSystemSetting(c.env.DB, "ga_report_enabled") === "1";
-    const eventEnabled = await getSystemSetting(c.env.DB, "ga_enabled") === "1";
-    const measurementId = await getSystemSetting(c.env.DB, "ga_measurement_id") || "";
     const oauthOk = await gaOAuthConfigured(c.env, c.env.DB);
+    let propertyId = "";
+    let reportEnabled = false;
+    let eventEnabled = false;
+    let measurementId = "";
+    if (siteId) {
+      const siteMap = await getMergedSiteSettings(c.env.DB, siteId);
+      propertyId = siteMap.ga_property_id || "";
+      reportEnabled = siteMap.ga_report_enabled === "1";
+      eventEnabled = siteMap.ga_enabled === "1";
+      measurementId = siteMap.ga_measurement_id || "";
+    }
     return c.json({
       success: true,
       data: {
         oauth_configured: oauthOk,
         connected: Boolean(refresh),
         email,
+        site_id: siteId || "",
         property_id: propertyId,
         report_enabled: reportEnabled,
         event_enabled: eventEnabled,
@@ -9500,15 +10243,24 @@ analyticsRouter.post("/analytics/ga/property", async (c) => {
     const admin = await requireAdmin(c);
     if (isErrorResponse(admin))
       return admin;
-    const { property_id, report_enabled } = await c.req.json();
-    const id = String(property_id || "").replace(/^properties\//, "").trim();
+    const body = await c.req.json();
+    const siteId = readSiteId3(c, body);
+    if (!siteId) {
+      return c.json({ success: false, message: "\u8BF7\u9009\u62E9\u7AD9\u70B9\u540E\u518D\u7ED1\u5B9A\u5A92\u4F53\u8D44\u6E90" }, 400);
+    }
+    if (!await agentCanAccessSite(c.env.DB, admin, siteId)) {
+      return c.json({ success: false, message: "\u65E0\u6743\u64CD\u4F5C\u8BE5\u7AD9\u70B9" }, 403);
+    }
+    const id = String(body.property_id || "").replace(/^properties\//, "").trim();
     if (!id)
       return c.json({ success: false, message: "\u8BF7\u9009\u62E9 GA4 \u5A92\u4F53\u8D44\u6E90" }, 400);
     const updates = { ga_property_id: id };
-    if (report_enabled !== void 0) {
-      updates.ga_report_enabled = report_enabled ? "1" : "0";
+    if (body.report_enabled !== void 0) {
+      updates.ga_report_enabled = body.report_enabled ? "1" : "0";
+    } else {
+      updates.ga_report_enabled = "1";
     }
-    await updateSystemSettings(c.env.DB, updates);
+    await updateSiteSettings(c.env.DB, siteId, updates);
     return c.json({ success: true });
   } catch (err) {
     return c.json({ success: false, message: err.message }, 500);
@@ -9519,13 +10271,20 @@ analyticsRouter.get("/analytics/ga/report", async (c) => {
     const agent = await requireAgent(c);
     if (isErrorResponse(agent))
       return agent;
-    const reportEnabled = await getSystemSetting(c.env.DB, "ga_report_enabled") === "1";
-    if (!reportEnabled) {
-      return c.json({ success: false, message: "\u5DF2\u5173\u95ED GA \u62A5\u544A\u67E5\u770B" }, 400);
+    const siteId = readSiteId3(c);
+    if (!siteId) {
+      return c.json({ success: false, message: "\u8BF7\u9009\u62E9\u7AD9\u70B9\u540E\u518D\u67E5\u770B GA \u62A5\u544A" }, 400);
     }
-    const propertyId = await getSystemSetting(c.env.DB, "ga_property_id") || "";
+    if (!await agentCanAccessSite(c.env.DB, agent, siteId)) {
+      return c.json({ success: false, message: "\u65E0\u6743\u8BBF\u95EE\u8BE5\u7AD9\u70B9" }, 403);
+    }
+    const siteMap = await getMergedSiteSettings(c.env.DB, siteId);
+    if (siteMap.ga_report_enabled !== "1") {
+      return c.json({ success: false, message: "\u5DF2\u5173\u95ED\u672C\u7AD9 GA \u62A5\u544A\u67E5\u770B" }, 400);
+    }
+    const propertyId = siteMap.ga_property_id || "";
     if (!propertyId) {
-      return c.json({ success: false, message: "\u8BF7\u5148\u9009\u62E9 GA4 \u5A92\u4F53\u8D44\u6E90" }, 400);
+      return c.json({ success: false, message: "\u8BF7\u5148\u4E3A\u672C\u7AD9\u9009\u62E9 GA4 \u5A92\u4F53\u8D44\u6E90" }, 400);
     }
     const kind = c.req.query("kind") || "overview";
     if (!["overview", "sources", "pages"].includes(kind)) {
@@ -9534,7 +10293,7 @@ analyticsRouter.get("/analytics/ga/report", async (c) => {
     const days = Number(c.req.query("days") || "7");
     const site = (c.req.query("site") || "").trim().toLowerCase().replace(/^www\./, "");
     const cacheKey = new Request(
-      `https://ga-cache.internal/${propertyId}/${kind}/${days}/${site || "all"}`
+      `https://ga-cache.internal/${siteId}/${propertyId}/${kind}/${days}/${site || "all"}`
     );
     try {
       const hit = await caches.default.match(cacheKey);
@@ -9592,6 +10351,177 @@ analyticsRouter.get("/analytics/ga/report", async (c) => {
   } catch (err) {
     const status = err.status === 429 ? 429 : 500;
     return c.json({ success: false, message: err.message || "GA \u62A5\u544A\u5931\u8D25" }, status);
+  }
+});
+
+// src/worker/routes/sites.ts
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+init_performance2();
+init_sites();
+init_settings();
+init_auth();
+var sitesRouter = new Hono2();
+sitesRouter.get("/sites", async (c) => {
+  try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
+    const list = await listSitesForAgent(c.env.DB, agent);
+    return c.json({ success: true, data: list });
+  } catch (err) {
+    return c.json({ success: false, message: err.message }, 500);
+  }
+});
+sitesRouter.get("/sites/:id", async (c) => {
+  try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
+    const id = c.req.param("id");
+    if (!await agentCanAccessSite(c.env.DB, agent, id)) {
+      return c.json({ success: false, message: "\u65E0\u6743\u8BBF\u95EE\u8BE5\u7AD9\u70B9" }, 403);
+    }
+    const site = await getSiteById(c.env.DB, id);
+    if (!site)
+      return c.json({ success: false, message: "\u7AD9\u70B9\u4E0D\u5B58\u5728" }, 404);
+    return c.json({ success: true, data: site });
+  } catch (err) {
+    return c.json({ success: false, message: err.message }, 500);
+  }
+});
+sitesRouter.post("/sites", async (c) => {
+  try {
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
+    const body = await c.req.json();
+    const hosts = String(body.hosts || "").split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+    const site = await createSite(c.env.DB, {
+      name: String(body.name || ""),
+      hosts: Array.isArray(body.hosts) ? body.hosts : hosts,
+      copy_from_site_id: body.copy_from_site_id || void 0
+    });
+    return c.json({ success: true, data: site });
+  } catch (err) {
+    return c.json({ success: false, message: err.message }, 400);
+  }
+});
+sitesRouter.put("/sites/:id", async (c) => {
+  try {
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
+    const id = c.req.param("id");
+    const body = await c.req.json();
+    let hosts;
+    if (body.hosts !== void 0) {
+      hosts = Array.isArray(body.hosts) ? body.hosts : String(body.hosts || "").split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+    }
+    const site = await updateSite(c.env.DB, id, {
+      name: body.name,
+      status: body.status,
+      hosts
+    });
+    return c.json({ success: true, data: site });
+  } catch (err) {
+    return c.json({ success: false, message: err.message }, 400);
+  }
+});
+sitesRouter.delete("/sites/:id", async (c) => {
+  try {
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
+    await deleteSite(c.env.DB, c.req.param("id"));
+    return c.json({ success: true });
+  } catch (err) {
+    return c.json({ success: false, message: err.message }, 500);
+  }
+});
+sitesRouter.get("/sites/:id/settings", async (c) => {
+  try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
+    const id = c.req.param("id");
+    if (!await agentCanAccessSite(c.env.DB, agent, id)) {
+      return c.json({ success: false, message: "\u65E0\u6743\u8BBF\u95EE\u8BE5\u7AD9\u70B9" }, 403);
+    }
+    const merged = await getMergedSiteSettings(c.env.DB, id);
+    const siteOnly = await getSiteSettingsMap(c.env.DB, id);
+    return c.json({ success: true, data: { merged, site: siteOnly } });
+  } catch (err) {
+    return c.json({ success: false, message: err.message }, 500);
+  }
+});
+sitesRouter.post("/sites/:id/settings", async (c) => {
+  try {
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
+    const id = c.req.param("id");
+    const site = await getSiteById(c.env.DB, id);
+    if (!site)
+      return c.json({ success: false, message: "\u7AD9\u70B9\u4E0D\u5B58\u5728" }, 404);
+    const body = await c.req.json();
+    const sitePatch = {};
+    const globalPatch = {};
+    for (const [k, v] of Object.entries(body || {})) {
+      if (typeof v !== "string")
+        continue;
+      if (isSiteSettingKey(k))
+        sitePatch[k] = v;
+      else
+        globalPatch[k] = v;
+    }
+    if (Object.keys(sitePatch).length)
+      await updateSiteSettings(c.env.DB, id, sitePatch);
+    if (Object.keys(globalPatch).length)
+      await updateSystemSettings(c.env.DB, globalPatch);
+    return c.json({ success: true });
+  } catch (err) {
+    return c.json({ success: false, message: err.message }, 500);
+  }
+});
+sitesRouter.get("/agents/:id/sites", async (c) => {
+  try {
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
+    const ids = await getAgentSiteIds(c.env.DB, c.req.param("id"));
+    return c.json({ success: true, data: [...ids] });
+  } catch (err) {
+    return c.json({ success: false, message: err.message }, 500);
+  }
+});
+sitesRouter.put("/agents/:id/sites", async (c) => {
+  try {
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
+    const body = await c.req.json();
+    const siteIds = Array.isArray(body.site_ids) ? body.site_ids : [];
+    await setAgentSites(c.env.DB, c.req.param("id"), siteIds);
+    return c.json({ success: true });
+  } catch (err) {
+    return c.json({ success: false, message: err.message }, 500);
+  }
+});
+sitesRouter.get("/agents-with-sites", async (c) => {
+  try {
+    const admin = await requireAdmin(c);
+    if (isErrorResponse(admin))
+      return admin;
+    const agents = await getAllAgents(c.env.DB);
+    const data = [];
+    for (const a of agents) {
+      const ids = a.role === "admin" ? null : [...await getAgentSiteIds(c.env.DB, a.id)];
+      data.push({ ...a, site_ids: ids });
+    }
+    return c.json({ success: true, data });
+  } catch (err) {
+    return c.json({ success: false, message: err.message }, 500);
   }
 });
 
@@ -9692,6 +10622,7 @@ var ChatCoordinator = class {
     const role = url.searchParams.get("role") || "visitor";
     const conversationId = url.searchParams.get("cid") || "";
     const userId = url.searchParams.get("uid") || "";
+    const siteId = url.searchParams.get("site") || "";
     const webSocketPair = new WebSocketPair();
     const [client, server] = Object.values(webSocketPair);
     const tags = [`role:${role}`];
@@ -9700,6 +10631,9 @@ var ChatCoordinator = class {
     }
     if (userId) {
       tags.push(`uid:${userId}`);
+    }
+    if (siteId) {
+      tags.push(`site:${siteId}`);
     }
     this.ctx.acceptWebSocket(server, tags);
     server.send(JSON.stringify({
@@ -9743,9 +10677,31 @@ var ChatCoordinator = class {
             }
             return;
           }
+          const tags = this.ctx.getTags(ws) || [];
+          const siteTag = tags.find((t) => t.startsWith("site:"));
+          let siteId = siteTag ? siteTag.slice(5) : "";
+          if (!siteId && cid && !cid.startsWith("pending_")) {
+            const row = await this.env.DB.prepare(
+              "SELECT site_id FROM conversations WHERE id = ?"
+            ).bind(cid).first();
+            siteId = row?.site_id || "";
+          }
+          if (!siteId) {
+            try {
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  data: { code: "site_required", conversation_id: cid }
+                })
+              );
+            } catch {
+            }
+            return;
+          }
           const { conversation } = await getOrCreateConversation(
             this.env.DB,
             msgPayload.sender_id,
+            siteId,
             msgPayload.sender_name
           );
           const replaced = conversation.id !== cid;
@@ -9973,6 +10929,8 @@ app.route("/api", kbRouter);
 app.route("/api/admin", kbRouter);
 app.route("/api", analyticsRouter);
 app.route("/api/admin", analyticsRouter);
+app.route("/api", sitesRouter);
+app.route("/api/admin", sitesRouter);
 app.route("/api", uploadRouter);
 app.route("/", uploadRouter);
 app.all("/ws", async (c) => {
