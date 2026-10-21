@@ -1402,6 +1402,61 @@ var init_settings = __esm({
   }
 });
 
+// src/shared/defaultWidgetItems.ts
+var DEFAULT_WIDGET_ITEMS, DEFAULT_WIDGET_ITEMS_JSON;
+var init_defaultWidgetItems = __esm({
+  "src/shared/defaultWidgetItems.ts"() {
+    "use strict";
+    init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+    init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+    init_performance2();
+    DEFAULT_WIDGET_ITEMS = [
+      {
+        id: "wgt_default_chat",
+        type: "live_chat",
+        enabled: true,
+        translations_json: { "zh-CN": { title: "\u5728\u7EBF\u5BA2\u670D" }, en: { title: "Live chat" } }
+      },
+      {
+        id: "wgt_default_wa",
+        type: "whatsapp",
+        whatsapp_phone: "8613800000000",
+        enabled: true,
+        translations_json: { "zh-CN": { title: "WhatsApp \u54A8\u8BE2" }, en: { title: "WhatsApp" } }
+      },
+      {
+        id: "wgt_default_email",
+        type: "email_form",
+        enabled: true,
+        form_fields: [
+          { id: "fld_name", key: "name", type: "text", required: true },
+          { id: "fld_contact", key: "contact", type: "text", required: true },
+          { id: "fld_content", key: "content", type: "textarea", required: true }
+        ],
+        translations_json: {
+          "zh-CN": {
+            title: "\u90AE\u4EF6\u7559\u8A00",
+            fields: {
+              name: { label: "\u59D3\u540D / \u79F0\u547C", placeholder: "\u4F8B\u5982\uFF1A\u674E\u5148\u751F / \u5F20\u5973\u58EB" },
+              contact: { label: "\u8054\u7CFB\u65B9\u5F0F", placeholder: "\u624B\u673A\u53F7\u7801 / \u5FAE\u4FE1 / \u90AE\u7BB1" },
+              content: { label: "\u7559\u8A00\u9700\u6C42\u8BE6\u60C5", placeholder: "\u8BF7\u8BE6\u7EC6\u63CF\u8FF0\u60A8\u7684\u95EE\u9898\u6216\u9700\u6C42..." }
+            }
+          },
+          en: {
+            title: "Leave a message",
+            fields: {
+              name: { label: "Name", placeholder: "Your name" },
+              contact: { label: "Contact", placeholder: "Phone / Email" },
+              content: { label: "Message", placeholder: "How can we help?" }
+            }
+          }
+        }
+      }
+    ];
+    DEFAULT_WIDGET_ITEMS_JSON = JSON.stringify(DEFAULT_WIDGET_ITEMS);
+  }
+});
+
 // src/worker/db/sites.ts
 var sites_exports = {};
 __export(sites_exports, {
@@ -1447,10 +1502,23 @@ function normalizeHost(raw2) {
   return h;
 }
 function hostFromRequest(req, pageUrl) {
+  if (pageUrl) {
+    try {
+      const h = normalizeHost(new URL(pageUrl).hostname);
+      if (h)
+        return h;
+    } catch {
+      const h = normalizeHost(pageUrl);
+      if (h)
+        return h;
+    }
+  }
   const origin = req.headers.get("Origin") || "";
   if (origin) {
     try {
-      return normalizeHost(new URL(origin).hostname);
+      const h = normalizeHost(new URL(origin).hostname);
+      if (h)
+        return h;
     } catch {
     }
   }
@@ -1459,13 +1527,6 @@ function hostFromRequest(req, pageUrl) {
     try {
       return normalizeHost(new URL(referer).hostname);
     } catch {
-    }
-  }
-  if (pageUrl) {
-    try {
-      return normalizeHost(new URL(pageUrl).hostname);
-    } catch {
-      return normalizeHost(pageUrl);
     }
   }
   return "";
@@ -1614,6 +1675,7 @@ async function createSite(db, data) {
       widget_brand_color: "#07c160",
       widget_position: "bottom-right",
       widget_button_title: "\u5728\u7EBF\u5BA2\u670D",
+      widget_items_json: DEFAULT_WIDGET_ITEMS_JSON,
       welcome_message: "\u60A8\u597D\uFF01\u5F88\u9AD8\u5174\u4E3A\u60A8\u670D\u52A1\uFF0C\u8BF7\u95EE\u6709\u4EC0\u4E48\u53EF\u4EE5\u534F\u52A9\u60A8\u7684\uFF1F",
       offline_message: "\u5F53\u524D\u5750\u5E2D\u6682\u672A\u5728\u7EBF\uFF0C\u8BF7\u76F4\u63A5\u7559\u8A00\uFF0C\u6211\u4EEC\u7A0D\u540E\u5C06\u56DE\u590D\u60A8\u3002",
       auto_reply_enabled: "true"
@@ -1728,6 +1790,7 @@ var init_sites = __esm({
     init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
     init_performance2();
     init_settings();
+    init_defaultWidgetItems();
     SITE_SETTING_KEYS = [
       "widget_title",
       "widget_brand_color",
@@ -2606,11 +2669,27 @@ __export(kbService_exports, {
   DEPRECATED_MODEL_MAP: () => DEPRECATED_MODEL_MAP,
   askKnowledge: () => askKnowledge,
   indexDocument: () => indexDocument,
+  normalizeModelPool: () => normalizeModelPool,
+  resolveCfModelId: () => resolveCfModelId,
   searchKnowledge: () => searchKnowledge,
   splitTextIntoChunks: () => splitTextIntoChunks,
   testAiChannel: () => testAiChannel,
   translateContentWithAi: () => translateContentWithAi
 });
+function resolveCfModelId(model) {
+  const raw2 = (model || "").trim();
+  if (!raw2)
+    return CF_ULTIMATE_MODEL;
+  return DEPRECATED_MODEL_MAP[raw2] || raw2;
+}
+function normalizeModelPool(channels) {
+  return channels.map((ch) => {
+    if (ch.type !== "cf_workers_ai")
+      return ch;
+    const next = resolveCfModelId(ch.model);
+    return next === ch.model ? ch : { ...ch, model: next };
+  });
+}
 function splitTextIntoChunks(text, maxChars = 600, overlap = 80) {
   const clean = text.trim();
   if (!clean)
@@ -2824,37 +2903,29 @@ async function runCfModelOnce(env2, modelName, messages, maxTokens, temperature)
 async function callCfWorkersAi(env2, channel2, messages) {
   if (!env2.AI)
     throw new Error("Workers AI \u8FB9\u7F18\u6A21\u578B\u7ED1\u5B9A\u672A\u5F00\u542F");
-  let modelName = (channel2.model || "").trim();
-  if (DEPRECATED_MODEL_MAP[modelName]) {
-    modelName = DEPRECATED_MODEL_MAP[modelName];
-  }
-  if (!modelName) {
-    modelName = "@cf/meta/llama-3.1-8b-instruct";
-  }
+  const primary = resolveCfModelId(channel2.model);
   const maxTokens = Math.max(channel2.max_tokens || 0, 1536);
   const temperature = channel2.temperature ?? 0.3;
-  try {
-    const text = await runCfModelOnce(env2, modelName, messages, maxTokens, temperature);
-    if (text)
-      return text;
-  } catch (err) {
-    const msg = String(err?.message || err);
-    if (msg.includes("deprecated") || msg.includes("No such model") || msg.includes("not found")) {
-      const ultimate = "@cf/meta/llama-3.1-8b-instruct";
-      if (ultimate !== modelName) {
-        const retry = await runCfModelOnce(env2, ultimate, messages, Math.min(maxTokens, 1536), 0.2);
-        if (retry)
-          return retry;
+  const tried = /* @__PURE__ */ new Set();
+  const candidates = [primary, ...CF_AI_FALLBACK_MODELS.filter((m) => m !== primary), CF_ULTIMATE_MODEL];
+  let lastErr = null;
+  for (const modelName of candidates) {
+    if (tried.has(modelName))
+      continue;
+    tried.add(modelName);
+    try {
+      const text = await runCfModelOnce(env2, modelName, messages, maxTokens, temperature);
+      if (text)
+        return text;
+      lastErr = new Error(`${modelName} \u8FD4\u56DE\u7A7A\u5185\u5BB9`);
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err?.message || err));
+      const msg = lastErr.message;
+      if (!msg.includes("deprecated") && !msg.includes("No such model") && !msg.includes("not found") && !msg.includes("5028") && modelName === primary) {
       }
     }
-    throw err;
   }
-  if (modelName !== "@cf/meta/llama-3.1-8b-instruct") {
-    const retry = await runCfModelOnce(env2, "@cf/meta/llama-3.1-8b-instruct", messages, 1536, 0.2);
-    if (retry)
-      return retry;
-  }
-  throw new Error("Workers AI \u8FD4\u56DE\u5185\u5BB9\u4E3A\u7A7A");
+  throw lastErr || new Error("Workers AI \u8FD4\u56DE\u5185\u5BB9\u4E3A\u7A7A");
 }
 async function callOpenAiCompatible(channel2, messages) {
   let endpoint = (channel2.endpoint || "https://api.openai.com/v1").trim().replace(/\/+$/, "");
@@ -2960,7 +3031,7 @@ ${contextText || "\uFF08\u6682\u65E0\u76F4\u63A5\u76F8\u5173\u7684\u53C2\u8003\u
     if (poolJson) {
       const parsed = JSON.parse(poolJson);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        modelPool = parsed;
+        modelPool = normalizeModelPool(parsed);
       }
     }
   } catch (e) {
@@ -3052,7 +3123,7 @@ async function translateContentWithAi(env2, params) {
     if (poolJson) {
       const parsed = JSON.parse(poolJson);
       if (Array.isArray(parsed) && parsed.length > 0)
-        modelPool = parsed;
+        modelPool = normalizeModelPool(parsed);
     }
   } catch (e) {
   }
@@ -3120,7 +3191,7 @@ ${JSON.stringify(fields)}`;
   }
   return { translations, results, used_channel: lastUsedChannel };
 }
-var EMBEDDING_MODEL, DEPRECATED_MODEL_MAP, DEFAULT_MODEL_POOL;
+var EMBEDDING_MODEL, DEPRECATED_MODEL_MAP, CF_AI_FALLBACK_MODELS, CF_ULTIMATE_MODEL, DEFAULT_MODEL_POOL;
 var init_kbService = __esm({
   "src/worker/services/kbService.ts"() {
     "use strict";
@@ -3131,9 +3202,23 @@ var init_kbService = __esm({
     init_settings();
     EMBEDDING_MODEL = "@cf/baai/bge-large-zh-v1.5";
     DEPRECATED_MODEL_MAP = {
-      "@cf/meta/infire-llama-3.1-8b-instruct": "@cf/meta/llama-3.1-8b-instruct",
+      "@cf/meta/llama-3.1-8b-instruct": "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
+      "@cf/meta/llama-3.1-8b-instruct-awq": "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
+      "@cf/meta/infire-llama-3.1-8b-instruct": "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
+      "@cf/meta/llama-3-8b-instruct": "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
+      "@cf/meta/llama-3-8b-instruct-awq": "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
+      "@cf/meta/llama-3.1-70b-instruct": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
       "@cf/qwen/qwen1.5-14b-chat": "@cf/qwen/qwen2.5-72b-instruct"
     };
+    CF_AI_FALLBACK_MODELS = [
+      "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      "@cf/qwen/qwen2.5-72b-instruct",
+      "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
+      "@cf/meta/llama-3.2-3b-instruct"
+    ];
+    CF_ULTIMATE_MODEL = "@cf/meta/llama-3.1-8b-instruct-fp8-fast";
+    __name(resolveCfModelId, "resolveCfModelId");
+    __name(normalizeModelPool, "normalizeModelPool");
     DEFAULT_MODEL_POOL = [
       {
         id: "default_cf_llama33",
@@ -3155,9 +3240,9 @@ var init_kbService = __esm({
       },
       {
         id: "default_cf_llama31",
-        name: "Cloudflare Llama-3.1-8B",
+        name: "Cloudflare Llama-3.1-8B (fp8-fast)",
         type: "cf_workers_ai",
-        model: "@cf/meta/llama-3.1-8b-instruct",
+        model: "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
         enabled: true,
         max_tokens: 1536,
         temperature: 0.2
@@ -6096,6 +6181,7 @@ __name(deleteCustomKey, "deleteCustomKey");
 init_langSettings();
 init_sessionToken();
 init_sites();
+init_defaultWidgetItems();
 var chatRouter = new Hono2();
 chatRouter.post("/visitor/init", async (c) => {
   try {
@@ -6401,7 +6487,7 @@ chatRouter.post("/admin/conversations/batch-cleanup", async (c) => {
 chatRouter.get("/widget/config", async (c) => {
   try {
     const hostHint = (c.req.query("host") || "").trim();
-    const site = hostHint ? await resolveSiteFromRequest(c.env.DB, c.req.raw, `https://${hostHint}/`) : await resolveSiteFromRequest(c.env.DB, c.req.raw);
+    const site = hostHint ? await resolveSiteByHost(c.env.DB, hostHint) : await resolveSiteFromRequest(c.env.DB, c.req.raw);
     if (!site) {
       c.header("Cache-Control", "no-store");
       return c.json(
@@ -6414,7 +6500,9 @@ chatRouter.get("/widget/config", async (c) => {
     const position = settingsMap.widget_position || "bottom-right";
     const custom_icon = settingsMap.widget_custom_icon || "";
     const button_title = settingsMap.widget_button_title || "\u5728\u7EBF\u5BA2\u670D";
-    const widget_items_json = settingsMap.widget_items_json || "";
+    let widget_items_json = (settingsMap.widget_items_json || "").trim();
+    if (!widget_items_json)
+      widget_items_json = DEFAULT_WIDGET_ITEMS_JSON;
     const ga_enabled = settingsMap.ga_enabled === "1";
     const ga_measurement_id = settingsMap.ga_measurement_id || "";
     const langs = await getLanguages(c.env.DB);
@@ -6428,8 +6516,7 @@ chatRouter.get("/widget/config", async (c) => {
       );
     }
     const welcome_message = welcome_messages["zh-CN"] || welcome_messages["en"] || settingsMap.welcome_message || settingsMap.welcome_message_zh || DEFAULT_WELCOME_ZH;
-    c.header("Cache-Control", "public, max-age=300, s-maxage=300");
-    c.header("Vary", "Origin");
+    c.header("Cache-Control", "no-store");
     return c.json({
       success: true,
       data: {
@@ -9301,6 +9388,12 @@ init_kb();
 init_kbService();
 init_settings();
 var kbRouter = new Hono2();
+kbRouter.use("/admin/kb/*", async (c, next) => {
+  const admin = await requireAdmin(c);
+  if (isErrorResponse(admin))
+    return admin;
+  await next();
+});
 function checkApiKey(c) {
   const secret = c.env.KB_API_TOKEN || c.env.ADMIN_SECURITY_CODE;
   if (!secret)
@@ -9607,7 +9700,7 @@ kbRouter.get("/admin/kb/ai-config", async (c) => {
       try {
         const parsed = JSON.parse(poolJson);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          modelPool = parsed;
+          modelPool = normalizeModelPool(parsed);
         }
       } catch (e) {
       }
@@ -9639,7 +9732,7 @@ kbRouter.post("/admin/kb/ai-config", async (c) => {
       updates["ai_system_prompt"] = body.system_prompt;
     }
     if (body.model_pool && Array.isArray(body.model_pool)) {
-      updates["ai_model_pool"] = JSON.stringify(body.model_pool);
+      updates["ai_model_pool"] = JSON.stringify(normalizeModelPool(body.model_pool));
     }
     if (body.ticket_auto_reply !== void 0) {
       updates["ai_ticket_auto_reply"] = String(body.ticket_auto_reply);
@@ -10894,6 +10987,7 @@ app.use("*", cors({
     "Content-Type",
     "Authorization",
     "X-Requested-With",
+    "X-Site-Id",
     "x-session-token",
     "x-visitor-id",
     "x-visitor-token",
