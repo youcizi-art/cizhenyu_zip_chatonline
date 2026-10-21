@@ -1578,14 +1578,6 @@ async function resolveSiteByHost(db, hostRaw) {
     const site = await getSiteById(db, row.site_id);
     if (site && site.status === "active")
       return site;
-    return null;
-  }
-  if (host === "localhost" || host === "127.0.0.1") {
-    const first = await db.prepare("SELECT * FROM sites WHERE status = 'active' ORDER BY created_at ASC LIMIT 1").first();
-    if (!first)
-      return null;
-    const [withHosts] = await attachHosts(db, [first]);
-    return withHosts;
   }
   return null;
 }
