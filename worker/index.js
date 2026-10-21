@@ -6310,7 +6310,8 @@ adminRouter.get("/stats", async (c) => {
 var SETTINGS_SECRET_KEYS = /* @__PURE__ */ new Set([
   "ga_oauth_refresh_token",
   "ga_oauth_access_cache",
-  "ga_oauth_state"
+  "ga_oauth_state",
+  "ga_oauth_client_secret"
 ]);
 adminRouter.get("/settings", async (c) => {
   try {
@@ -6320,7 +6321,7 @@ adminRouter.get("/settings", async (c) => {
     const data = await getSystemSettings(c.env.DB);
     for (const k of SETTINGS_SECRET_KEYS) {
       if (data[k])
-        data[k] = data[k] ? "__configured__" : "";
+        data[k] = "__configured__";
     }
     return c.json({ success: true, data });
   } catch (err) {
@@ -6333,8 +6334,11 @@ adminRouter.post("/settings", async (c) => {
     if (isErrorResponse(admin))
       return admin;
     const body = await c.req.json();
-    for (const k of SETTINGS_SECRET_KEYS) {
-      delete body[k];
+    delete body.ga_oauth_refresh_token;
+    delete body.ga_oauth_access_cache;
+    delete body.ga_oauth_state;
+    if (!body.ga_oauth_client_secret || body.ga_oauth_client_secret === "__configured__") {
+      delete body.ga_oauth_client_secret;
     }
     await updateSystemSettings(c.env.DB, body);
     return c.json({ success: true });
@@ -8961,83 +8965,161 @@ function daysToRange(days) {
   return { from: to - d * 24 * 60 * 60 * 1e3, to };
 }
 __name(daysToRange, "daysToRange");
-async function getInquiryFunnelStats(db, rangeDays = 7) {
+function hostFromUrl(url) {
+  if (!url)
+    return "";
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+__name(hostFromUrl, "hostFromUrl");
+function normalizeSiteFilter(site) {
+  return (site || "").trim().toLowerCase().replace(/^www\./, "");
+}
+__name(normalizeSiteFilter, "normalizeSiteFilter");
+async function getInquiryFunnelStats(db, rangeDays = 7, siteFilter) {
   const { from, to } = daysToRange(rangeDays);
-  const convRow = await db.prepare("SELECT COUNT(*) as c FROM conversations WHERE created_at >= ? AND created_at <= ?").bind(from, to).first();
-  const engagedRow = await db.prepare(
-    `SELECT COUNT(DISTINCT conversation_id) as c FROM messages
-       WHERE sender_type = 'visitor' AND created_at >= ? AND created_at <= ?`
-  ).bind(from, to).first();
-  const visitorMsgRow = await db.prepare(
-    `SELECT COUNT(*) as c FROM messages
-       WHERE sender_type = 'visitor' AND created_at >= ? AND created_at <= ?`
-  ).bind(from, to).first();
-  const ticketRow = await db.prepare(
-    `SELECT COUNT(*) as c FROM messages
-       WHERE sender_type = 'visitor'
-         AND created_at >= ? AND created_at <= ?
-         AND content LIKE '\u3010\u90AE\u4EF6\u7559\u8A00\u3011%'`
-  ).bind(from, to).first();
-  let formSubmissions = 0;
-  try {
-    const formRow = await db.prepare(
-      "SELECT COUNT(*) as c FROM form_submissions WHERE created_at >= ? AND created_at <= ?"
-    ).bind(from, to).first();
-    formSubmissions = formRow?.c || 0;
-  } catch {
-    formSubmissions = 0;
-  }
-  let crmNew = 0;
-  try {
-    const crmRow = await db.prepare(
-      "SELECT COUNT(*) as c FROM crm_customers WHERE created_at >= ? AND created_at <= ?"
-    ).bind(from, to).first();
-    crmNew = crmRow?.c || 0;
-  } catch {
-    crmNew = 0;
-  }
-  const conversations = convRow?.c || 0;
-  const engaged = engagedRow?.c || 0;
-  const tickets = ticketRow?.c || 0;
-  const inquiries = tickets + formSubmissions;
+  const site = normalizeSiteFilter(siteFilter);
   const recent = await db.prepare(
-    `SELECT page_context FROM conversations
-       WHERE created_at >= ? AND created_at <= ? AND page_context IS NOT NULL
-       ORDER BY created_at DESC LIMIT 500`
+    `SELECT id, page_context FROM conversations
+       WHERE created_at >= ? AND created_at <= ?
+       ORDER BY created_at DESC LIMIT 2000`
   ).bind(from, to).all();
-  const utmMap = /* @__PURE__ */ new Map();
-  const landMap = /* @__PURE__ */ new Map();
-  for (const row of recent.results || []) {
-    try {
-      const pc = JSON.parse(row.page_context || "{}");
-      const src = (pc.utm_source || "").trim() || "(direct)";
-      utmMap.set(src, (utmMap.get(src) || 0) + 1);
-      if (pc.url) {
-        try {
-          const path = new URL(pc.url).pathname || "/";
-          landMap.set(path, (landMap.get(path) || 0) + 1);
-        } catch {
-        }
+  const rows = recent.results || [];
+  const siteMap = /* @__PURE__ */ new Map();
+  const matchedIds = [];
+  const matchedContexts = [];
+  for (const row of rows) {
+    let host = "(unknown)";
+    let pc = {};
+    if (row.page_context) {
+      try {
+        pc = JSON.parse(row.page_context);
+        host = hostFromUrl(pc.url) || "(unknown)";
+      } catch {
       }
-    } catch {
+    }
+    siteMap.set(host, (siteMap.get(host) || 0) + 1);
+    if (!site || host === site) {
+      matchedIds.push(row.id);
+      matchedContexts.push(pc);
     }
   }
-  const top_utm = [...utmMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([source, conversations2]) => ({ source, conversations: conversations2 }));
-  const top_landing = [...landMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([path, conversations2]) => ({ path, conversations: conversations2 }));
+  const sites = [...siteMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([host, conversations2]) => ({ host, conversations: conversations2 }));
+  let conversations = 0;
+  let engaged = 0;
+  let visitorMessages = 0;
+  let tickets = 0;
+  let formSubmissions = 0;
+  let crmNew = 0;
+  if (!site) {
+    const convRow = await db.prepare("SELECT COUNT(*) as c FROM conversations WHERE created_at >= ? AND created_at <= ?").bind(from, to).first();
+    conversations = convRow?.c || 0;
+    const engagedRow = await db.prepare(
+      `SELECT COUNT(DISTINCT conversation_id) as c FROM messages
+         WHERE sender_type = 'visitor' AND created_at >= ? AND created_at <= ?`
+    ).bind(from, to).first();
+    engaged = engagedRow?.c || 0;
+    const visitorMsgRow = await db.prepare(
+      `SELECT COUNT(*) as c FROM messages
+         WHERE sender_type = 'visitor' AND created_at >= ? AND created_at <= ?`
+    ).bind(from, to).first();
+    visitorMessages = visitorMsgRow?.c || 0;
+    const ticketRow = await db.prepare(
+      `SELECT COUNT(*) as c FROM messages
+         WHERE sender_type = 'visitor'
+           AND created_at >= ? AND created_at <= ?
+           AND content LIKE '\u3010\u90AE\u4EF6\u7559\u8A00\u3011%'`
+    ).bind(from, to).first();
+    tickets = ticketRow?.c || 0;
+    try {
+      const formRow = await db.prepare(
+        "SELECT COUNT(*) as c FROM form_submissions WHERE created_at >= ? AND created_at <= ?"
+      ).bind(from, to).first();
+      formSubmissions = formRow?.c || 0;
+    } catch {
+      formSubmissions = 0;
+    }
+    try {
+      const crmRow = await db.prepare(
+        "SELECT COUNT(*) as c FROM crm_customers WHERE created_at >= ? AND created_at <= ?"
+      ).bind(from, to).first();
+      crmNew = crmRow?.c || 0;
+    } catch {
+      crmNew = 0;
+    }
+  } else {
+    conversations = matchedIds.length;
+    if (matchedIds.length > 0) {
+      const batchSize = 80;
+      for (let i = 0; i < matchedIds.length; i += batchSize) {
+        const batch = matchedIds.slice(i, i + batchSize);
+        const ph = batch.map(() => "?").join(",");
+        const eng = await db.prepare(
+          `SELECT COUNT(DISTINCT conversation_id) as c FROM messages
+             WHERE sender_type = 'visitor' AND conversation_id IN (${ph})
+               AND created_at >= ? AND created_at <= ?`
+        ).bind(...batch, from, to).first();
+        engaged += eng?.c || 0;
+        const vm = await db.prepare(
+          `SELECT COUNT(*) as c FROM messages
+             WHERE sender_type = 'visitor' AND conversation_id IN (${ph})
+               AND created_at >= ? AND created_at <= ?`
+        ).bind(...batch, from, to).first();
+        visitorMessages += vm?.c || 0;
+        const tk = await db.prepare(
+          `SELECT COUNT(*) as c FROM messages
+             WHERE sender_type = 'visitor' AND conversation_id IN (${ph})
+               AND created_at >= ? AND created_at <= ?
+               AND content LIKE '\u3010\u90AE\u4EF6\u7559\u8A00\u3011%'`
+        ).bind(...batch, from, to).first();
+        tickets += tk?.c || 0;
+      }
+    }
+    try {
+      const formRows = await db.prepare(
+        "SELECT source_url FROM form_submissions WHERE created_at >= ? AND created_at <= ? LIMIT 2000"
+      ).bind(from, to).all();
+      formSubmissions = (formRows.results || []).filter(
+        (r) => hostFromUrl(r.source_url) === site
+      ).length;
+    } catch {
+      formSubmissions = 0;
+    }
+    crmNew = 0;
+  }
+  const utmMap = /* @__PURE__ */ new Map();
+  const landMap = /* @__PURE__ */ new Map();
+  for (const pc of matchedContexts) {
+    const src = (pc.utm_source || "").trim() || "(direct)";
+    utmMap.set(src, (utmMap.get(src) || 0) + 1);
+    if (pc.url) {
+      try {
+        const path = new URL(pc.url).pathname || "/";
+        landMap.set(path, (landMap.get(path) || 0) + 1);
+      } catch {
+      }
+    }
+  }
+  const inquiries = tickets + formSubmissions;
   return {
     range_days: Math.min(90, Math.max(1, Math.floor(rangeDays) || 7)),
     from_ms: from,
     to_ms: to,
+    site,
+    sites,
     conversations,
     engaged_conversations: engaged,
-    visitor_messages: visitorMsgRow?.c || 0,
+    visitor_messages: visitorMessages,
     inquiry_tickets: tickets,
     form_submissions: formSubmissions,
     crm_new: crmNew,
     engage_rate: conversations > 0 ? engaged / conversations : 0,
     inquiry_rate: conversations > 0 ? inquiries / conversations : 0,
-    top_utm,
-    top_landing
+    top_utm: [...utmMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([source, conversations2]) => ({ source, conversations: conversations2 })),
+    top_landing: [...landMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([path, conversations2]) => ({ path, conversations: conversations2 }))
   };
 }
 __name(getInquiryFunnelStats, "getInquiryFunnelStats");
@@ -9052,13 +9134,24 @@ init_performance2();
 init_settings();
 var GA_REFRESH_KEY = "ga_oauth_refresh_token";
 var GA_ACCESS_CACHE_KEY = "ga_oauth_access_cache";
-function gaOAuthConfigured(env2) {
-  return Boolean((env2.GA_OAUTH_CLIENT_ID || "").trim() && (env2.GA_OAUTH_CLIENT_SECRET || "").trim());
+var GA_CLIENT_ID_KEY = "ga_oauth_client_id";
+var GA_CLIENT_SECRET_KEY = "ga_oauth_client_secret";
+async function resolveGaOAuthCreds(env2, db) {
+  const fromDbId = (await getSystemSetting(db, GA_CLIENT_ID_KEY) || "").trim();
+  const fromDbSecret = (await getSystemSetting(db, GA_CLIENT_SECRET_KEY) || "").trim();
+  const clientId = fromDbId || (env2.GA_OAUTH_CLIENT_ID || "").trim();
+  const clientSecret = fromDbSecret || (env2.GA_OAUTH_CLIENT_SECRET || "").trim();
+  return { clientId, clientSecret };
+}
+__name(resolveGaOAuthCreds, "resolveGaOAuthCreds");
+async function gaOAuthConfigured(env2, db) {
+  const c = await resolveGaOAuthCreds(env2, db);
+  return Boolean(c.clientId && c.clientSecret);
 }
 __name(gaOAuthConfigured, "gaOAuthConfigured");
-function buildGaAuthUrl(env2, redirectUri, state) {
+function buildGaAuthUrl(creds, redirectUri, state) {
   const params = new URLSearchParams({
-    client_id: (env2.GA_OAUTH_CLIENT_ID || "").trim(),
+    client_id: creds.clientId,
     redirect_uri: redirectUri,
     response_type: "code",
     access_type: "offline",
@@ -9073,11 +9166,11 @@ function buildGaAuthUrl(env2, redirectUri, state) {
   return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
 }
 __name(buildGaAuthUrl, "buildGaAuthUrl");
-async function exchangeGaCode(env2, code, redirectUri) {
+async function exchangeGaCode(creds, code, redirectUri) {
   const body = new URLSearchParams({
     code,
-    client_id: (env2.GA_OAUTH_CLIENT_ID || "").trim(),
-    client_secret: (env2.GA_OAUTH_CLIENT_SECRET || "").trim(),
+    client_id: creds.clientId,
+    client_secret: creds.clientSecret,
     redirect_uri: redirectUri,
     grant_type: "authorization_code"
   });
@@ -9123,9 +9216,13 @@ async function refreshAccessToken(env2, db) {
     } catch {
     }
   }
+  const creds = await resolveGaOAuthCreds(env2, db);
+  if (!creds.clientId || !creds.clientSecret) {
+    throw new Error("\u8BF7\u5148\u5728\u300CGoogle \u5206\u6790\u300D\u8BBE\u7F6E\u4E2D\u586B\u5199\u5BA2\u6237\u7AEF ID \u4E0E\u5BA2\u6237\u7AEF\u5BC6\u94A5");
+  }
   const body = new URLSearchParams({
-    client_id: (env2.GA_OAUTH_CLIENT_ID || "").trim(),
-    client_secret: (env2.GA_OAUTH_CLIENT_SECRET || "").trim(),
+    client_id: creds.clientId,
+    client_secret: creds.clientSecret,
     refresh_token: refresh,
     grant_type: "refresh_token"
   });
@@ -9192,6 +9289,17 @@ async function runGaReport(env2, db, opts) {
   const token = await refreshAccessToken(env2, db);
   const days = Math.min(90, Math.max(1, opts.rangeDays || 7));
   const dateRanges = [{ startDate: `${days}daysAgo`, endDate: "yesterday" }];
+  const host = (opts.hostName || "").trim().toLowerCase().replace(/^www\./, "");
+  const dimensionFilter = host ? {
+    filter: {
+      fieldName: "hostName",
+      stringFilter: {
+        matchType: "CONTAINS",
+        value: host,
+        caseSensitive: false
+      }
+    }
+  } : void 0;
   let body;
   if (opts.kind === "overview") {
     body = {
@@ -9202,6 +9310,7 @@ async function runGaReport(env2, db, opts) {
         { name: "screenPageViews" },
         { name: "eventCount" }
       ],
+      ...dimensionFilter ? { dimensionFilter } : {},
       returnPropertyQuota: true
     };
   } else if (opts.kind === "sources") {
@@ -9211,6 +9320,7 @@ async function runGaReport(env2, db, opts) {
       metrics: [{ name: "sessions" }, { name: "activeUsers" }],
       orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
       limit: 10,
+      ...dimensionFilter ? { dimensionFilter } : {},
       returnPropertyQuota: true
     };
   } else {
@@ -9220,6 +9330,7 @@ async function runGaReport(env2, db, opts) {
       metrics: [{ name: "sessions" }, { name: "activeUsers" }],
       orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
       limit: 10,
+      ...dimensionFilter ? { dimensionFilter } : {},
       returnPropertyQuota: true
     };
   }
@@ -9253,7 +9364,8 @@ analyticsRouter.get("/analytics/inquiry-funnel", async (c) => {
     if (isErrorResponse(agent))
       return agent;
     const days = Number(c.req.query("days") || "7");
-    const data = await getInquiryFunnelStats(c.env.DB, days);
+    const site = (c.req.query("site") || "").trim();
+    const data = await getInquiryFunnelStats(c.env.DB, days, site || void 0);
     return c.json({ success: true, data });
   } catch (err) {
     return c.json({ success: false, message: err.message }, 500);
@@ -9270,10 +9382,11 @@ analyticsRouter.get("/analytics/ga/status", async (c) => {
     const reportEnabled = await getSystemSetting(c.env.DB, "ga_report_enabled") === "1";
     const eventEnabled = await getSystemSetting(c.env.DB, "ga_enabled") === "1";
     const measurementId = await getSystemSetting(c.env.DB, "ga_measurement_id") || "";
+    const oauthOk = await gaOAuthConfigured(c.env, c.env.DB);
     return c.json({
       success: true,
       data: {
-        oauth_configured: gaOAuthConfigured(c.env),
+        oauth_configured: oauthOk,
         connected: Boolean(refresh),
         email,
         property_id: propertyId,
@@ -9291,17 +9404,21 @@ analyticsRouter.get("/analytics/ga/oauth/start", async (c) => {
     const admin = await requireAdmin(c);
     if (isErrorResponse(admin))
       return admin;
-    if (!gaOAuthConfigured(c.env)) {
-      return c.json({
-        success: false,
-        message: "\u90E8\u7F72\u73AF\u5883\u672A\u914D\u7F6E GA_OAUTH_CLIENT_ID / GA_OAUTH_CLIENT_SECRET\uFF0C\u65E0\u6CD5\u8FDE\u63A5 Google"
-      }, 400);
+    const creds = await resolveGaOAuthCreds(c.env, c.env.DB);
+    if (!creds.clientId || !creds.clientSecret) {
+      return c.json(
+        {
+          success: false,
+          message: "\u8BF7\u5148\u5728\u672C\u9875\u586B\u5199\u300CGoogle \u5BA2\u6237\u7AEF ID\u300D\u548C\u300C\u5BA2\u6237\u7AEF\u5BC6\u94A5\u300D\u5E76\u4FDD\u5B58\uFF0C\u518D\u70B9\u51FB\u8FDE\u63A5\uFF08\u4E5F\u53EF\u7531\u90E8\u7F72\u65B9\u5728 Cloudflare Secrets \u9884\u7F6E\uFF09"
+        },
+        400
+      );
     }
     const origin = new URL(c.req.url).origin;
     const redirectUri = (c.env.GA_OAUTH_REDIRECT_URI || "").trim() || `${origin}/api/analytics/ga/oauth/callback`;
     const state = crypto.randomUUID().slice(0, 16);
     await updateSystemSettings(c.env.DB, { ga_oauth_state: state });
-    const url = buildGaAuthUrl(c.env, redirectUri, state);
+    const url = buildGaAuthUrl(creds, redirectUri, state);
     return c.json({ success: true, data: { url, redirect_uri: redirectUri } });
   } catch (err) {
     return c.json({ success: false, message: err.message }, 500);
@@ -9322,11 +9439,14 @@ analyticsRouter.get("/analytics/ga/oauth/callback", async (c) => {
     if (!code || !state || state !== expected) {
       return c.redirect(`${adminBase}?ga=error&msg=${encodeURIComponent("OAuth state \u65E0\u6548")}`);
     }
-    if (!gaOAuthConfigured(c.env)) {
-      return c.redirect(`${adminBase}?ga=error&msg=${encodeURIComponent("\u672A\u914D\u7F6E OAuth \u5BC6\u94A5")}`);
+    const creds = await resolveGaOAuthCreds(c.env, c.env.DB);
+    if (!creds.clientId || !creds.clientSecret) {
+      return c.redirect(
+        `${adminBase}?ga=error&msg=${encodeURIComponent("\u672A\u914D\u7F6E Google \u5BA2\u6237\u7AEF ID/\u5BC6\u94A5")}`
+      );
     }
     const redirectUri = (c.env.GA_OAUTH_REDIRECT_URI || "").trim() || `${origin}/api/analytics/ga/oauth/callback`;
-    const tokens = await exchangeGaCode(c.env, code, redirectUri);
+    const tokens = await exchangeGaCode(creds, code, redirectUri);
     const updates = {
       ga_oauth_state: "",
       ga_connected_email: tokens.email || "",
@@ -9366,8 +9486,8 @@ analyticsRouter.get("/analytics/ga/properties", async (c) => {
     const admin = await requireAdmin(c);
     if (isErrorResponse(admin))
       return admin;
-    if (!gaOAuthConfigured(c.env)) {
-      return c.json({ success: false, message: "\u672A\u914D\u7F6E Google OAuth" }, 400);
+    if (!await gaOAuthConfigured(c.env, c.env.DB)) {
+      return c.json({ success: false, message: "\u8BF7\u5148\u586B\u5199\u5E76\u4FDD\u5B58 Google \u5BA2\u6237\u7AEF ID/\u5BC6\u94A5" }, 400);
     }
     const list = await listGaProperties(c.env, c.env.DB);
     return c.json({ success: true, data: list });
@@ -9412,8 +9532,9 @@ analyticsRouter.get("/analytics/ga/report", async (c) => {
       return c.json({ success: false, message: "\u65E0\u6548\u7684\u62A5\u544A\u7C7B\u578B" }, 400);
     }
     const days = Number(c.req.query("days") || "7");
+    const site = (c.req.query("site") || "").trim().toLowerCase().replace(/^www\./, "");
     const cacheKey = new Request(
-      `https://ga-cache.internal/${propertyId}/${kind}/${days}`
+      `https://ga-cache.internal/${propertyId}/${kind}/${days}/${site || "all"}`
     );
     try {
       const hit = await caches.default.match(cacheKey);
@@ -9426,7 +9547,8 @@ analyticsRouter.get("/analytics/ga/report", async (c) => {
     const raw2 = await runGaReport(c.env, c.env.DB, {
       propertyId,
       rangeDays: days,
-      kind
+      kind,
+      hostName: site || void 0
     });
     let data;
     if (kind === "overview") {
@@ -9439,6 +9561,7 @@ analyticsRouter.get("/analytics/ga/report", async (c) => {
       data = {
         kind,
         days,
+        site: site || "",
         activeUsers: map.activeUsers || 0,
         sessions: map.sessions || 0,
         screenPageViews: map.screenPageViews || 0,
@@ -9451,7 +9574,7 @@ analyticsRouter.get("/analytics/ga/report", async (c) => {
         sessions: Number(r.metricValues?.[0]?.value || 0),
         activeUsers: Number(r.metricValues?.[1]?.value || 0)
       }));
-      data = { kind, days, rows, quota: raw2.propertyQuota || null };
+      data = { kind, days, site: site || "", rows, quota: raw2.propertyQuota || null };
     }
     try {
       await caches.default.put(
