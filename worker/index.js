@@ -1070,7 +1070,7 @@ async function getAllAgents(db) {
 async function createAgent(db, data) {
   const existing = await db.prepare("SELECT id FROM agents WHERE username = ?").bind(data.username).first();
   if (existing) {
-    throw new Error("\u7528\u6237\u540D\u5DF2\u88AB\u5360\u7528\uFF0C\u8BF7\u66F4\u6362");
+    throw new Error("Username is already taken");
   }
   const id = "agent_" + crypto.randomUUID().slice(0, 8);
   const pwdHash = await hashPassword(data.password);
@@ -1103,23 +1103,23 @@ async function updateAgent(db, id, data) {
 async function deleteAgent(db, id) {
   const agent = await getAgentById(db, id);
   if (!agent)
-    throw new Error("\u5BA2\u670D\u4E0D\u5B58\u5728");
+    throw new Error("Agent not found");
   if (agent.username === "admin") {
-    throw new Error("\u9ED8\u8BA4\u8D85\u7EA7\u7BA1\u7406\u5458\u4E0D\u53EF\u5220\u9664");
+    throw new Error("Cannot delete the default super admin");
   }
   await db.prepare("DELETE FROM agents WHERE id = ?").bind(id).run();
 }
 async function updateCurrentProfile(db, id, data) {
   const current = await getAgentById(db, id);
   if (!current)
-    throw new Error("\u8D26\u53F7\u4E0D\u5B58\u5728");
+    throw new Error("Account not found");
   if (data.new_password) {
     if (!data.old_password) {
-      throw new Error("\u4FEE\u6539\u5BC6\u7801\u5FC5\u987B\u8F93\u5165\u539F\u5BC6\u7801");
+      throw new Error("Current password is required to change password");
     }
     const oldHash = await hashPassword(data.old_password);
     if (current.password_hash !== oldHash) {
-      throw new Error("\u539F\u5BC6\u7801\u9519\u8BEF");
+      throw new Error("Current password is incorrect");
     }
     const newHash = await hashPassword(data.new_password);
     await db.prepare("UPDATE agents SET password_hash = ? WHERE id = ?").bind(newHash, id).run();
@@ -1127,7 +1127,7 @@ async function updateCurrentProfile(db, id, data) {
   if (data.username !== current.username) {
     const conflict = await db.prepare("SELECT id FROM agents WHERE username = ? AND id != ?").bind(data.username, id).first();
     if (conflict) {
-      throw new Error("\u7528\u6237\u540D\u5DF2\u88AB\u5360\u7528");
+      throw new Error("Username is already taken");
     }
   }
   await db.prepare("UPDATE agents SET username = ?, display_name = ? WHERE id = ?").bind(data.username, data.display_name, id).run();
@@ -1348,7 +1348,7 @@ function getSettingForLang(settings, baseKey, langCode, fallback = "") {
     return String(bare);
   return fallback;
 }
-var DEFAULT_WELCOME_ZH;
+var DEFAULT_WELCOME_MESSAGE;
 var init_langSettings = __esm({
   "src/shared/langSettings.ts"() {
     "use strict";
@@ -1357,7 +1357,7 @@ var init_langSettings = __esm({
     init_performance2();
     __name(settingKeyCandidates, "settingKeyCandidates");
     __name(getSettingForLang, "getSettingForLang");
-    DEFAULT_WELCOME_ZH = "\u60A8\u597D\uFF01\u6B22\u8FCE\u4F7F\u7528\u5728\u7EBF\u5BA2\u670D\u7CFB\u7EDF\uFF0C\u8BF7\u95EE\u6709\u4EC0\u4E48\u53EF\u4EE5\u5E2E\u60A8\uFF1F";
+    DEFAULT_WELCOME_MESSAGE = "Hello! Welcome to live chat. How can we help you?";
   }
 });
 
@@ -1366,8 +1366,8 @@ async function getSystemSettings(db) {
   const res = await db.prepare("SELECT key, value FROM settings").all();
   const result = {
     widget_title: "\u5728\u7EBF\u4E13\u5C5E\u5BA2\u670D",
-    welcome_message: "\u60A8\u597D\uFF01\u5F88\u9AD8\u5174\u4E3A\u60A8\u670D\u52A1\uFF0C\u8BF7\u95EE\u6709\u4EC0\u4E48\u53EF\u4EE5\u534F\u52A9\u60A8\u7684\uFF1F",
-    offline_message: "\u5F53\u524D\u5750\u5E2D\u6682\u672A\u5728\u7EBF\uFF0C\u8BF7\u76F4\u63A5\u7559\u8A00\uFF0C\u6211\u4EEC\u7A0D\u540E\u5C06\u56DE\u590D\u60A8\u3002",
+    welcome_message: "Hello! How can we help you today?",
+    offline_message: "No agents are online right now. Please leave a message and we will reply soon.",
     auto_reply_enabled: "true",
     widget_brand_color: "#07c160",
     widget_position: "bottom-right"
@@ -1646,10 +1646,10 @@ async function createSite(db, data) {
   await ensureSitesSchema(db);
   const name = data.name.trim();
   if (!name)
-    throw new Error("\u7AD9\u70B9\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A");
+    throw new Error("Site name cannot be empty");
   const hosts = [...new Set(data.hosts.map(normalizeHost).filter(Boolean))];
   if (!hosts.length)
-    throw new Error("\u81F3\u5C11\u767B\u8BB0\u4E00\u4E2A\u57DF\u540D");
+    throw new Error("Register at least one domain");
   for (const h of hosts) {
     const taken = await db.prepare("SELECT site_id FROM site_hosts WHERE host = ?").bind(h).first();
     if (taken)
@@ -1676,8 +1676,8 @@ async function createSite(db, data) {
       widget_position: "bottom-right",
       widget_button_title: "\u5728\u7EBF\u5BA2\u670D",
       widget_items_json: DEFAULT_WIDGET_ITEMS_JSON,
-      welcome_message: "\u60A8\u597D\uFF01\u5F88\u9AD8\u5174\u4E3A\u60A8\u670D\u52A1\uFF0C\u8BF7\u95EE\u6709\u4EC0\u4E48\u53EF\u4EE5\u534F\u52A9\u60A8\u7684\uFF1F",
-      offline_message: "\u5F53\u524D\u5750\u5E2D\u6682\u672A\u5728\u7EBF\uFF0C\u8BF7\u76F4\u63A5\u7559\u8A00\uFF0C\u6211\u4EEC\u7A0D\u540E\u5C06\u56DE\u590D\u60A8\u3002",
+      welcome_message: "Hello! How can we help you today?",
+      offline_message: "No agents are online right now. Please leave a message and we will reply soon.",
       auto_reply_enabled: "true"
     });
   }
@@ -1688,12 +1688,12 @@ async function updateSite(db, id, data) {
   await ensureSitesSchema(db);
   const existing = await getSiteById(db, id);
   if (!existing)
-    throw new Error("\u7AD9\u70B9\u4E0D\u5B58\u5728");
+    throw new Error("Site not found");
   const now = Date.now();
   if (data.name !== void 0) {
     const name = data.name.trim();
     if (!name)
-      throw new Error("\u7AD9\u70B9\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A");
+      throw new Error("Site name cannot be empty");
     await db.prepare("UPDATE sites SET name = ?, updated_at = ? WHERE id = ?").bind(name, now, id).run();
   }
   if (data.status !== void 0) {
@@ -1702,7 +1702,7 @@ async function updateSite(db, id, data) {
   if (data.hosts !== void 0) {
     const hosts = [...new Set(data.hosts.map(normalizeHost).filter(Boolean))];
     if (!hosts.length)
-      throw new Error("\u81F3\u5C11\u767B\u8BB0\u4E00\u4E2A\u57DF\u540D");
+      throw new Error("Register at least one domain");
     for (const h of hosts) {
       const taken = await db.prepare("SELECT site_id FROM site_hosts WHERE host = ?").bind(h).first();
       if (taken && taken.site_id !== id) {
@@ -1870,7 +1870,7 @@ async function getOrCreateConversation(db, visitorId, siteId, visitorName, visit
   } catch (e) {
   }
   if (!siteId)
-    throw new Error("\u7F3A\u5C11\u7AD9\u70B9");
+    throw new Error("Missing site");
   const pageContextJson = contextData?.page_context ? JSON.stringify(contextData.page_context) : null;
   const productSnapshotJson = contextData?.product_snapshot ? JSON.stringify(contextData.product_snapshot) : null;
   const deviceInfoJson = contextData?.device_info ? JSON.stringify(contextData.device_info) : null;
@@ -1957,7 +1957,7 @@ async function getOrCreateConversation(db, visitorId, siteId, visitorName, visit
   const settingsMap = await getMergedSiteSettings(db, siteId);
   let welcomeMsg = getSettingForLang(settingsMap, "welcome_message", visitorLang || "en", "");
   if (!welcomeMsg) {
-    welcomeMsg = getSettingForLang(settingsMap, "welcome_message", "en", "") || getSettingForLang(settingsMap, "welcome_message", "zh-CN", "") || settingsMap.welcome_message || DEFAULT_WELCOME_ZH;
+    welcomeMsg = getSettingForLang(settingsMap, "welcome_message", "en", "") || getSettingForLang(settingsMap, "welcome_message", "zh-CN", "") || settingsMap.welcome_message || DEFAULT_WELCOME_MESSAGE;
   }
   await db.prepare(
     `INSERT INTO conversations (
@@ -2003,7 +2003,7 @@ async function getOrCreateConversation(db, visitorId, siteId, visitorName, visit
     }
   }
   const welcomeMsgId = `msg_${crypto.randomUUID().slice(0, 8)}`;
-  const defaultWelcomeTemplate = welcomeMsg || "${welcome_default:\u60A8\u597D\uFF01\u5F88\u9AD8\u5174\u4E3A\u60A8\u670D\u52A1\uFF0C\u8BF7\u95EE\u6709\u4EC0\u4E48\u53EF\u4EE5\u534F\u52A9\u60A8\u7684\uFF1F}";
+  const defaultWelcomeTemplate = welcomeMsg || "${welcome_default:Hello! How can we help you today?}";
   await db.prepare(
     `INSERT INTO messages (
       id, conversation_id, sender_type, sender_id, sender_name,
@@ -2359,7 +2359,7 @@ async function sendEmailWithFailover(toEmail, subject, html, settings) {
     }
     return { success: false, provider: "useplunk", error: plunkRes.error };
   }
-  return { success: false, error: "\u672A\u914D\u7F6E\u6709\u6548\u7684\u90AE\u4EF6\u670D\u52A1\u5BC6\u94A5 (Resend \u6216 UsePlunk)" };
+  return { success: false, error: "No valid email API key configured (Resend or UsePlunk)" };
 }
 async function sendViaTelegram(botToken, chatId, text) {
   try {
@@ -2902,7 +2902,7 @@ async function runCfModelOnce(env2, modelName, messages, maxTokens, temperature)
 }
 async function callCfWorkersAi(env2, channel2, messages) {
   if (!env2.AI)
-    throw new Error("Workers AI \u8FB9\u7F18\u6A21\u578B\u7ED1\u5B9A\u672A\u5F00\u542F");
+    throw new Error("Workers AI binding is not enabled");
   const primary = resolveCfModelId(channel2.model);
   const maxTokens = Math.max(channel2.max_tokens || 0, 1536);
   const temperature = channel2.temperature ?? 0.3;
@@ -2959,7 +2959,7 @@ async function callOpenAiCompatible(channel2, messages) {
     const data = await res.json();
     const content = asTrimmedText(data?.choices?.[0]?.message?.content);
     if (!content)
-      throw new Error("\u6A21\u578B\u8FD4\u56DE\u7A7A\u5185\u5BB9");
+      throw new Error("Model returned empty content");
     return content;
   } finally {
     clearTimeout(timer);
@@ -3164,7 +3164,7 @@ ${JSON.stringify(fields)}`;
       lastUsedChannel = channelName;
       const parsed = extractJsonObject(text);
       if (!parsed) {
-        results[targetLang] = { ok: false, error: "\u6A21\u578B\u672A\u8FD4\u56DE\u5408\u6CD5 JSON" };
+        results[targetLang] = { ok: false, error: "Model did not return valid JSON" };
         continue;
       }
       const normalized = {};
@@ -3179,7 +3179,7 @@ ${JSON.stringify(fields)}`;
         }
       }
       if (!hasValue) {
-        results[targetLang] = { ok: false, error: "\u8BD1\u6587\u4E3A\u7A7A" };
+        results[targetLang] = { ok: false, error: "Translation is empty" };
         continue;
       }
       translations[targetLang] = normalized;
@@ -5750,18 +5750,18 @@ __name(extractBearer, "extractBearer");
 async function requireAgent(c) {
   const token = extractBearer(c);
   if (!token) {
-    return c.json({ success: false, message: "\u672A\u6388\u6743\uFF1A\u8BF7\u5148\u767B\u5F55" }, 401);
+    return c.json({ success: false, message: "Unauthorized: please sign in" }, 401);
   }
   const payload = await verifyAgentToken(c.env, token);
   if (!payload) {
-    return c.json({ success: false, message: "\u672A\u6388\u6743\uFF1A\u767B\u5F55\u5DF2\u5931\u6548\uFF0C\u8BF7\u91CD\u65B0\u767B\u5F55" }, 401);
+    return c.json({ success: false, message: "Unauthorized: session expired. Please sign in again" }, 401);
   }
   const agent = await getAgentById(c.env.DB, payload.id);
   if (!agent) {
-    return c.json({ success: false, message: "\u672A\u6388\u6743\uFF1A\u5750\u5E2D\u4E0D\u5B58\u5728\u6216\u5DF2\u5931\u6548" }, 401);
+    return c.json({ success: false, message: "Unauthorized: agent not found or inactive" }, 401);
   }
   if (payload.role === "admin" && agent.role !== "admin") {
-    return c.json({ success: false, message: "\u672A\u6388\u6743\uFF1A\u6743\u9650\u5DF2\u53D8\u66F4\uFF0C\u8BF7\u91CD\u65B0\u767B\u5F55" }, 401);
+    return c.json({ success: false, message: "Unauthorized: permissions changed. Please sign in again" }, 401);
   }
   return agent;
 }
@@ -5771,7 +5771,7 @@ async function requireAdmin(c) {
   if (agent instanceof Response)
     return agent;
   if (agent.role !== "admin") {
-    return c.json({ success: false, message: "\u6743\u9650\u4E0D\u8DB3\uFF1A\u4EC5\u8D85\u7EA7\u7BA1\u7406\u5458\u53EF\u64CD\u4F5C" }, 403);
+    return c.json({ success: false, message: "Forbidden: super admin only" }, 403);
   }
   return agent;
 }
@@ -5796,7 +5796,7 @@ async function requireAgentOrVisitorAccess(c, conversationId, conversationVisito
   if (visitorId && visitorToken && visitorId === conversationVisitorId && await verifyVisitorToken2(c.env, visitorToken, visitorId, conversationId)) {
     return { kind: "visitor", visitorId };
   }
-  return c.json({ success: false, message: "\u672A\u6388\u6743\uFF1A\u65E0\u6743\u8BBF\u95EE\u8BE5\u4F1A\u8BDD" }, 401);
+  return c.json({ success: false, message: "Unauthorized: no access to this conversation" }, 401);
 }
 __name(requireAgentOrVisitorAccess, "requireAgentOrVisitorAccess");
 
@@ -5822,16 +5822,16 @@ authRouter.post("/login", async (c) => {
       windowSec: 300
     });
     if (!rl.ok) {
-      return c.json({ success: false, message: "\u767B\u5F55\u5C1D\u8BD5\u8FC7\u4E8E\u9891\u7E41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5" }, 429);
+      return c.json({ success: false, message: "Too many login attempts. Please try again later" }, 429);
     }
     const { username, password, security_code, turnstile_token } = await c.req.json();
     if (!username || !password) {
-      return c.json({ success: false, message: "\u8BF7\u8F93\u5165\u7528\u6237\u540D\u548C\u5BC6\u7801" }, 400);
+      return c.json({ success: false, message: "Enter username and password" }, 400);
     }
     const expectedSecurityCode = c.env.ADMIN_SECURITY_CODE;
     if (expectedSecurityCode) {
       if (!security_code || security_code.trim() !== expectedSecurityCode.trim()) {
-        return c.json({ success: false, message: "\u540E\u53F0\u5B89\u5168\u7801\u9A8C\u8BC1\u5931\u8D25\uFF0C\u8BF7\u786E\u8BA4\u5B89\u5168\u7801\u6B63\u786E" }, 403);
+        return c.json({ success: false, message: "Security code verification failed" }, 403);
       }
     }
     const isValidHuman = await verifyTurnstileToken(
@@ -5840,11 +5840,11 @@ authRouter.post("/login", async (c) => {
       clientIp(c)
     );
     if (!isValidHuman) {
-      return c.json({ success: false, message: "\u4EBA\u673A\u9A8C\u8BC1\u5931\u8D25\uFF0C\u8BF7\u5237\u65B0\u91CD\u8BD5" }, 403);
+      return c.json({ success: false, message: "Human verification failed. Please refresh and try again" }, 403);
     }
     const agent = await verifyAgent(c.env.DB, username, password);
     if (!agent) {
-      return c.json({ success: false, message: "\u7528\u6237\u540D\u6216\u5BC6\u7801\u9519\u8BEF" }, 401);
+      return c.json({ success: false, message: "Invalid username or password" }, 401);
     }
     await updateAgentStatus(c.env.DB, agent.id, "online");
     const token = await issueAgentToken(c.env, { id: agent.id, role: agent.role });
@@ -5869,7 +5869,7 @@ authRouter.post("/status", async (c) => {
     return agent;
   const { status } = await c.req.json();
   if (!status) {
-    return c.json({ success: false, message: "\u7F3A\u5C11\u53C2\u6570" }, 400);
+    return c.json({ success: false, message: "Missing parameters" }, 400);
   }
   await updateAgentStatus(c.env.DB, agent.id, status);
   try {
@@ -5926,7 +5926,7 @@ authRouter.post("/profile", async (c) => {
     const body = await c.req.json();
     const { username, display_name, old_password, new_password } = body;
     if (!username || !display_name) {
-      return c.json({ success: false, message: "\u8BF7\u5B8C\u6574\u586B\u5199\u7528\u6237\u540D\u548C\u59D3\u540D" }, 400);
+      return c.json({ success: false, message: "Username and display name are required" }, 400);
     }
     const updated = await updateCurrentProfile(c.env.DB, agent.id, {
       username,
@@ -6079,9 +6079,9 @@ __name(addLanguage, "addLanguage");
 async function deleteLanguage(db, code) {
   const lang = await db.prepare("SELECT is_default FROM i18n_languages WHERE code = ?").bind(code).first();
   if (!lang)
-    throw new Error("\u8BED\u79CD\u4E0D\u5B58\u5728");
+    throw new Error("Language not found");
   if (lang.is_default === 1) {
-    throw new Error("\u9ED8\u8BA4\u515C\u5E95\u8BED\u79CD\u4E0D\u53EF\u5220\u9664");
+    throw new Error("Cannot delete the default language");
   }
   await db.prepare("DELETE FROM i18n_translations WHERE lang_code = ?").bind(code).run();
   await db.prepare("DELETE FROM i18n_languages WHERE code = ?").bind(code).run();
@@ -6155,7 +6155,7 @@ __name(saveTranslations, "saveTranslations");
 async function addCustomKey(db, key, defaultValue, description) {
   const cleanKey = key.trim();
   if (!cleanKey)
-    throw new Error("\u8BCD\u6761\u952E\u540D\u4E0D\u80FD\u4E3A\u7A7A");
+    throw new Error("Key name cannot be empty");
   await ensureDescriptionColumn(db);
   const memo = (description || "").trim();
   const languages = await getLanguages(db);
@@ -6191,7 +6191,7 @@ chatRouter.post("/visitor/init", async (c) => {
       windowSec: 60
     });
     if (!rl.ok) {
-      return c.json({ success: false, message: "\u8BF7\u6C42\u8FC7\u4E8E\u9891\u7E41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5" }, 429);
+      return c.json({ success: false, message: "Too many requests. Please try again later" }, 429);
     }
     await ensureDefaultAdmin(c.env.DB);
     const body = await c.req.json();
@@ -6206,13 +6206,13 @@ chatRouter.post("/visitor/init", async (c) => {
       device_info
     } = body;
     if (!visitor_id) {
-      return c.json({ success: false, message: "\u7F3A\u5C11\u8BBF\u5BA2\u552F\u4E00\u6807\u8BC6" }, 400);
+      return c.json({ success: false, message: "Missing visitor id" }, 400);
     }
     const pageUrl = page_context && typeof page_context === "object" ? page_context.url : void 0;
     const site = await resolveSiteFromRequest(c.env.DB, c.req.raw, pageUrl);
     if (!site) {
       return c.json(
-        { success: false, message: "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u4E3A\u6388\u6743\u7AD9\u70B9\uFF0C\u65E0\u6CD5\u4F7F\u7528\u5BA2\u670D" },
+        { success: false, message: "This domain is not registered; live chat is unavailable" },
         403
       );
     }
@@ -6285,17 +6285,17 @@ chatRouter.post("/visitor/context", async (c) => {
   try {
     const { conversation_id, visitor_id, page_context, product_snapshot, device_info } = await c.req.json();
     if (!conversation_id || !visitor_id || !page_context) {
-      return c.json({ success: false, message: "\u53C2\u6570\u4E0D\u5B8C\u6574" }, 400);
+      return c.json({ success: false, message: "Incomplete parameters" }, 400);
     }
     const access = await requireAgentOrVisitorAccess(c, conversation_id, visitor_id);
     if (access instanceof Response)
       return access;
     if (access.kind === "visitor" && access.visitorId !== visitor_id) {
-      return c.json({ success: false, message: "\u672A\u6388\u6743\uFF1A\u4F1A\u8BDD\u4E0D\u5339\u914D" }, 403);
+      return c.json({ success: false, message: "Unauthorized: conversation mismatch" }, 403);
     }
     const owned = await c.env.DB.prepare("SELECT id FROM conversations WHERE id = ? AND visitor_id = ?").bind(conversation_id, visitor_id).first();
     if (!owned) {
-      return c.json({ success: false, message: "\u672A\u6388\u6743\uFF1A\u4F1A\u8BDD\u4E0D\u5339\u914D" }, 403);
+      return c.json({ success: false, message: "Unauthorized: conversation mismatch" }, 403);
     }
     const clientTzHint = device_info && typeof device_info === "object" && device_info.timezone || null;
     const geo = extractClientGeo(c.req.raw, clientTzHint);
@@ -6362,10 +6362,10 @@ chatRouter.get("/conversations", async (c) => {
     const platform2 = c.req.query("platform") || void 0;
     const siteId = (c.req.query("site_id") || "").trim();
     if (!siteId) {
-      return c.json({ success: false, message: "\u8BF7\u9009\u62E9\u7AD9\u70B9\uFF08site_id\uFF09" }, 400);
+      return c.json({ success: false, message: "Select a site (site_id)" }, 400);
     }
     if (!await agentCanAccessSite(c.env.DB, agent, siteId)) {
-      return c.json({ success: false, message: "\u65E0\u6743\u8BBF\u95EE\u8BE5\u7AD9\u70B9\u4F1A\u8BDD" }, 403);
+      return c.json({ success: false, message: "No permission to access conversations on this site" }, 403);
     }
     const list = await getConversations(c.env.DB, { siteId, platform: platform2 });
     return c.json({ success: true, data: list });
@@ -6378,7 +6378,7 @@ chatRouter.get("/conversations/:id/messages", async (c) => {
     const convId = c.req.param("id");
     const conv = await c.env.DB.prepare("SELECT id, visitor_id FROM conversations WHERE id = ?").bind(convId).first();
     if (!conv)
-      return c.json({ success: false, message: "\u4F1A\u8BDD\u4E0D\u5B58\u5728" }, 404);
+      return c.json({ success: false, message: "Conversation not found" }, 404);
     const access = await requireAgentOrVisitorAccess(c, conv.id, conv.visitor_id);
     if (access instanceof Response)
       return access;
@@ -6396,7 +6396,7 @@ chatRouter.post("/conversations/:id/read", async (c) => {
     const convId = c.req.param("id");
     const conv = await c.env.DB.prepare("SELECT id, visitor_id FROM conversations WHERE id = ?").bind(convId).first();
     if (!conv)
-      return c.json({ success: false, message: "\u4F1A\u8BDD\u4E0D\u5B58\u5728" }, 404);
+      return c.json({ success: false, message: "Conversation not found" }, 404);
     const access = await requireAgentOrVisitorAccess(c, conv.id, conv.visitor_id);
     if (access instanceof Response)
       return access;
@@ -6491,7 +6491,7 @@ chatRouter.get("/widget/config", async (c) => {
     if (!site) {
       c.header("Cache-Control", "no-store");
       return c.json(
-        { success: false, message: "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u4E3A\u6388\u6743\u7AD9\u70B9", code: "site_not_allowed" },
+        { success: false, message: "This domain is not registered as an authorized site", code: "site_not_allowed" },
         403
       );
     }
@@ -6515,7 +6515,7 @@ chatRouter.get("/widget/config", async (c) => {
         ""
       );
     }
-    const welcome_message = welcome_messages["zh-CN"] || welcome_messages["en"] || settingsMap.welcome_message || settingsMap.welcome_message_zh || DEFAULT_WELCOME_ZH;
+    const welcome_message = welcome_messages["zh-CN"] || welcome_messages["en"] || settingsMap.welcome_message || settingsMap.welcome_message_zh || DEFAULT_WELCOME_MESSAGE;
     c.header("Cache-Control", "no-store");
     return c.json({
       success: true,
@@ -6545,7 +6545,7 @@ chatRouter.post("/visitor/ticket", async (c) => {
       windowSec: 300
     });
     if (!rl.ok) {
-      return c.json({ success: false, message: "\u63D0\u4EA4\u8FC7\u4E8E\u9891\u7E41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5" }, 429);
+      return c.json({ success: false, message: "Too many submissions. Please try again later" }, 429);
     }
     const {
       visitor_id,
@@ -6557,7 +6557,7 @@ chatRouter.post("/visitor/ticket", async (c) => {
       source_url
     } = await c.req.json();
     if (!content || !contact) {
-      return c.json({ success: false, message: "\u8BF7\u5B8C\u6574\u586B\u5199\u8054\u7CFB\u65B9\u5F0F\u4E0E\u7559\u8A00\u5185\u5BB9" }, 400);
+      return c.json({ success: false, message: "Contact info and message are required" }, 400);
     }
     const name = String(visitor_name || "\u8BBF\u5BA2").trim().slice(0, 64) || "\u8BBF\u5BA2";
     const contactStr = String(contact).trim().slice(0, 200);
@@ -6590,7 +6590,7 @@ chatRouter.post("/visitor/ticket", async (c) => {
       typeof source_url === "string" ? source_url : void 0
     );
     if (!site) {
-      return c.json({ success: false, message: "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u4E3A\u6388\u6743\u7AD9\u70B9" }, 403);
+      return c.json({ success: false, message: "This domain is not registered as an authorized site" }, 403);
     }
     let convId = typeof conversation_id === "string" ? conversation_id.trim() : "";
     if (!convId || convId.startsWith("pending_")) {
@@ -6667,7 +6667,7 @@ ${answer}`;
             `INSERT INTO messages (
               id, conversation_id, sender_type, sender_id, sender_name,
               message_type, content, status, created_at
-            ) VALUES (?, ?, 'agent', 'ai_bot', 'AI \u667A\u80FD\u5BA2\u670D', 'text', ?, 'sent', ?)`
+            ) VALUES (?, ?, 'agent', 'ai_bot', 'AI Assistant', 'text', ?, 'sent', ?)`
           ).bind(aiMsgId, convId, aiReplyText, aiNow).run();
           await c.env.DB.prepare(
             "UPDATE conversations SET last_message_text = ?, last_message_time = ? WHERE id = ?"
@@ -6682,7 +6682,7 @@ ${answer}`;
                 conversation_id: convId,
                 sender_type: "agent",
                 sender_id: "ai_bot",
-                sender_name: "AI \u667A\u80FD\u5BA2\u670D",
+                sender_name: "AI Assistant",
                 message_type: "text",
                 content: aiReplyText,
                 status: "sent",
@@ -6697,7 +6697,7 @@ ${answer}`;
     );
     return c.json({
       success: true,
-      message: "\u60A8\u7684\u7559\u8A00\u5DF2\u6210\u529F\u63D0\u4EA4\uFF0C\u5BA2\u670D\u5C06\u5C3D\u5FEB\u4E0E\u60A8\u8054\u7CFB\uFF01",
+      message: "Your message was submitted. An agent will contact you soon.",
       data: { conversation_id: convId, message_id: msgId, notify: notifyRes }
     });
   } catch (err) {
@@ -6773,7 +6773,7 @@ adminRouter.post("/agents", async (c) => {
     const body = await c.req.json();
     const { username, password, display_name, role } = body;
     if (!username || !password || !display_name) {
-      return c.json({ success: false, message: "\u8BF7\u5B8C\u6574\u586B\u5199\u5458\u5DE5\u4FE1\u606F" }, 400);
+      return c.json({ success: false, message: "Complete agent details are required" }, 400);
     }
     const id = await createAgent(c.env.DB, { username, password, display_name, role });
     return c.json({ success: true, data: { id } });
@@ -6815,7 +6815,7 @@ adminRouter.get("/stats", async (c) => {
     if (siteId) {
       const { agentCanAccessSite: agentCanAccessSite2 } = await Promise.resolve().then(() => (init_sites(), sites_exports));
       if (!await agentCanAccessSite2(c.env.DB, agent, siteId)) {
-        return c.json({ success: false, message: "\u65E0\u6743\u67E5\u770B\u8BE5\u7AD9\u70B9\u7EDF\u8BA1" }, 403);
+        return c.json({ success: false, message: "No permission to view stats for this site" }, 403);
       }
     }
     const stats = await getDashboardStats(c.env.DB, siteId || void 0);
@@ -6900,7 +6900,7 @@ i18nRouter.post("/languages", async (c) => {
       return admin;
     const { code, name } = await c.req.json();
     if (!code || !name) {
-      return c.json({ success: false, message: "\u8BF7\u5B8C\u6574\u586B\u5199\u8BED\u8A00\u4EE3\u7801\u548C\u540D\u79F0" }, 400);
+      return c.json({ success: false, message: "Language code and name are required" }, 400);
     }
     await addLanguage(c.env.DB, code.trim(), name.trim());
     return c.json({ success: true });
@@ -6948,7 +6948,7 @@ i18nRouter.post("/translations", async (c) => {
       return agent;
     const { lang_code, translations } = await c.req.json();
     if (!lang_code || !translations) {
-      return c.json({ success: false, message: "\u7F3A\u5C11\u53C2\u6570" }, 400);
+      return c.json({ success: false, message: "Missing parameters" }, 400);
     }
     await saveTranslations(c.env.DB, lang_code, translations);
     return c.json({ success: true });
@@ -6963,7 +6963,7 @@ i18nRouter.post("/custom-keys", async (c) => {
       return agent;
     const { key, default_value, description } = await c.req.json();
     if (!key)
-      return c.json({ success: false, message: "\u8BCD\u6761\u952E\u540D\u4E0D\u80FD\u4E3A\u7A7A" }, 400);
+      return c.json({ success: false, message: "Key name cannot be empty" }, 400);
     await addCustomKey(c.env.DB, key, default_value || "", description || "");
     return c.json({ success: true });
   } catch (err) {
@@ -6996,16 +6996,16 @@ uploadRouter.post("/upload", async (c) => {
       windowSec: 300
     });
     if (!rl.ok) {
-      return c.json({ success: false, message: "\u4E0A\u4F20\u8FC7\u4E8E\u9891\u7E41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5" }, 429);
+      return c.json({ success: false, message: "Too many uploads. Please try again later" }, 429);
     }
     const formData = await c.req.parseBody();
     const file = formData["file"];
     if (!file) {
-      return c.json({ success: false, message: "\u672A\u627E\u5230\u4E0A\u4F20\u6587\u4EF6" }, 400);
+      return c.json({ success: false, message: "No upload file found" }, 400);
     }
     const maxBytes = 15 * 1024 * 1024;
     if (typeof file.size === "number" && file.size > maxBytes) {
-      return c.json({ success: false, message: "\u6587\u4EF6\u8FC7\u5927\uFF08\u4E0A\u9650 15MB\uFF09" }, 400);
+      return c.json({ success: false, message: "File too large (max 15MB)" }, 400);
     }
     const ext = file.name ? file.name.split(".").pop() || "bin" : "bin";
     const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10).replace(/-/g, "");
@@ -7029,7 +7029,7 @@ uploadRouter.post("/upload", async (c) => {
       }
     });
   } catch (err) {
-    return c.json({ success: false, message: "\u4E0A\u4F20\u5931\u8D25: " + err.message }, 500);
+    return c.json({ success: false, message: "Upload failed: " + err.message }, 500);
   }
 });
 uploadRouter.get("/media/*", async (c) => {
@@ -7081,7 +7081,7 @@ async function updateGroup(db, id, name, color) {
 __name(updateGroup, "updateGroup");
 async function deleteGroup(db, id) {
   if (id === "grp_default") {
-    throw new Error("\u9ED8\u8BA4\u5206\u7EC4\u4E0D\u53EF\u5220\u9664");
+    throw new Error("Cannot delete the default group");
   }
   await db.prepare('UPDATE conversations SET group_id = "grp_default" WHERE group_id = ?').bind(id).run();
   await db.prepare("DELETE FROM customer_groups WHERE id = ?").bind(id).run();
@@ -7112,7 +7112,7 @@ groupsRouter.post("/groups", async (c) => {
       return agent;
     const { name, color } = await c.req.json();
     if (!name)
-      return c.json({ success: false, message: "\u5206\u7EC4\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A" }, 400);
+      return c.json({ success: false, message: "Group name cannot be empty" }, 400);
     const item = await createGroup(c.env.DB, name, color);
     return c.json({ success: true, data: item });
   } catch (err) {
@@ -7152,7 +7152,7 @@ groupsRouter.post("/conversations/:id/group", async (c) => {
     const convId = c.req.param("id");
     const { group_id } = await c.req.json();
     if (!group_id)
-      return c.json({ success: false, message: "\u8BF7\u6307\u5B9A\u5206\u7EC4" }, 400);
+      return c.json({ success: false, message: "Specify a group" }, 400);
     await setConversationGroup(c.env.DB, convId, group_id);
     return c.json({ success: true });
   } catch (err) {
@@ -7221,14 +7221,14 @@ __name(createPrivateChat, "createPrivateChat");
 async function verifyPrivateChatPassword(db, id, password) {
   const chat = await db.prepare("SELECT * FROM private_chats WHERE id = ?").bind(id).first();
   if (!chat) {
-    return { success: false, message: "\u79C1\u5BC6\u804A\u5929\u4E0D\u5B58\u5728\u6216\u5DF2\u88AB\u5220\u9664" };
+    return { success: false, message: "Private chat not found or deleted" };
   }
   if (chat.expires_at && chat.expires_at < Date.now()) {
-    return { success: false, message: "\u8BE5\u79C1\u5BC6\u804A\u5929\u5DF2\u8FC7\u671F\u5931\u6548" };
+    return { success: false, message: "This private chat has expired" };
   }
   const inputHash = await hashPassword(password);
   if (chat.password_hash !== inputHash) {
-    return { success: false, message: "\u79C1\u5BC6\u8BBF\u95EE\u5BC6\u7801\u9519\u8BEF" };
+    return { success: false, message: "Incorrect access password" };
   }
   return { success: true, chat };
 }
@@ -7263,7 +7263,7 @@ privateChatRouter.get("/private-chats", async (c) => {
     if (isErrorResponse(agent))
       return agent;
     if (!privateChatEnabled(c.env)) {
-      return c.json({ success: false, message: "\u4E13\u5C5E\u529F\u80FD\u672A\u5F00\u542F" }, 404);
+      return c.json({ success: false, message: "Private chat feature is disabled" }, 404);
     }
     const list = await getPrivateChats(c.env.DB);
     return c.json({ success: true, data: list });
@@ -7279,7 +7279,7 @@ privateChatRouter.post("/private-chats", async (c) => {
     const body = await c.req.json();
     const { title: title2, password, expires_hours } = body;
     if (!title2 || !password) {
-      return c.json({ success: false, message: "\u8BF7\u5B8C\u6574\u586B\u5199\u79C1\u804A\u4E3B\u9898\u4E0E\u5BC6\u7801" }, 400);
+      return c.json({ success: false, message: "Private chat title and password are required" }, 400);
     }
     const item = await createPrivateChat(c.env.DB, title2, password, agent.id, expires_hours);
     return c.json({ success: true, data: item });
@@ -7307,11 +7307,11 @@ privateChatRouter.post("/private-chat/verify", async (c) => {
       windowSec: 300
     });
     if (!rl.ok) {
-      return c.json({ success: false, message: "\u5C1D\u8BD5\u8FC7\u4E8E\u9891\u7E41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5" }, 429);
+      return c.json({ success: false, message: "Too many attempts. Please try again later" }, 429);
     }
     const { id, password } = await c.req.json();
     if (!id || !password) {
-      return c.json({ success: false, message: "\u8BF7\u8F93\u5165\u4E13\u5C5E\u8BBF\u95EE\u5BC6\u7801" }, 400);
+      return c.json({ success: false, message: "Enter the access password" }, 400);
     }
     const res = await verifyPrivateChatPassword(c.env.DB, id, password);
     if (!res.success || !res.chat) {
@@ -7529,7 +7529,7 @@ async function startNewCustomerCycle(db, customerId, agentId, agentName) {
   await ensureCrmTables(db);
   const cust = await db.prepare("SELECT * FROM crm_customers WHERE id = ?").bind(customerId).first();
   if (!cust)
-    throw new Error("\u672A\u627E\u5230\u8BE5\u5BA2\u6237\u6863\u6848");
+    throw new Error("Customer profile not found");
   const nextCycle = (cust.cycle_number || 1) + 1;
   const now = Date.now();
   await db.prepare("UPDATE crm_customers SET cycle_number = ?, stage = ?, updated_at = ? WHERE id = ?").bind(nextCycle, "following", now, customerId).run();
@@ -7601,7 +7601,7 @@ crmRouter.post("/crm/customers", async (c) => {
       return agent;
     const body = await c.req.json();
     if (!body.name || !body.name.trim()) {
-      return c.json({ success: false, message: "\u5BA2\u6237\u59D3\u540D\u4E0D\u80FD\u4E3A\u7A7A" }, 400);
+      return c.json({ success: false, message: "Customer name cannot be empty" }, 400);
     }
     const customer = await createCrmCustomer(c.env.DB, {
       name: body.name.trim(),
@@ -7634,7 +7634,7 @@ crmRouter.put("/crm/customers/:id", async (c) => {
     const body = await c.req.json();
     const updated = await updateCrmCustomer(c.env.DB, id, body);
     if (!updated) {
-      return c.json({ success: false, message: "\u672A\u627E\u5230\u8BE5\u5BA2\u6237" }, 404);
+      return c.json({ success: false, message: "Customer not found" }, 404);
     }
     return c.json({ success: true, data: updated });
   } catch (err) {
@@ -7686,7 +7686,7 @@ crmRouter.post("/crm/followups", async (c) => {
       return agent;
     const body = await c.req.json();
     if (!body.customer_id || !body.content || !body.content.trim()) {
-      return c.json({ success: false, message: "\u8BF7\u5B8C\u6574\u586B\u5199\u5173\u8054\u5BA2\u6237\u4E0E\u8DDF\u8FDB\u5185\u5BB9" }, 400);
+      return c.json({ success: false, message: "Customer and follow-up content are required" }, 400);
     }
     const item = await createCrmFollowup(c.env.DB, {
       customer_id: body.customer_id,
@@ -7833,7 +7833,7 @@ function emptyFormLocaleBundle() {
 __name(emptyFormLocaleBundle, "emptyFormLocaleBundle");
 function displayFormTitle(form, defaultLang) {
   const bundle = pickLocaleBundle(form.translations_json, defaultLang || "zh-CN", defaultLang);
-  return bundle?.title?.trim() || form.key || "\u672A\u547D\u540D\u8868\u5355";
+  return bundle?.title?.trim() || form.key || "Untitled form";
 }
 __name(displayFormTitle, "displayFormTitle");
 
@@ -7987,7 +7987,7 @@ __name(getCustomFormById, "getCustomFormById");
 async function createCustomForm(db, data) {
   await ensureFormTables(db);
   if (!data.site_id)
-    throw new Error("site_id \u4E3A\u5FC5\u586B\u9879");
+    throw new Error("site_id is required");
   const id = `form_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 4)}`;
   const now = Date.now();
   const title2 = listTitle(data.translations_json, data.key);
@@ -8122,10 +8122,10 @@ formsRouter.get("/admin/forms", async (c) => {
       return agent;
     const siteId = readSiteId(c);
     if (!siteId) {
-      return c.json({ success: false, message: "\u8BF7\u9009\u62E9\u7AD9\u70B9\uFF08site_id\uFF09" }, 400);
+      return c.json({ success: false, message: "Select a site (site_id)" }, 400);
     }
     if (!await agentCanAccessSite(c.env.DB, agent, siteId)) {
-      return c.json({ success: false, message: "\u65E0\u6743\u8BBF\u95EE\u8BE5\u7AD9\u70B9\u8868\u5355" }, 403);
+      return c.json({ success: false, message: "No permission to access forms on this site" }, 403);
     }
     const list = await getAllCustomForms(c.env.DB, siteId);
     return c.json({ success: true, data: list });
@@ -8142,27 +8142,27 @@ formsRouter.post("/admin/forms", async (c) => {
     const { key, fields, style, translations_json } = body;
     const siteId = readSiteId(c, body);
     if (!siteId) {
-      return c.json({ success: false, message: "\u8BF7\u9009\u62E9\u7AD9\u70B9\uFF08site_id\uFF09" }, 400);
+      return c.json({ success: false, message: "Select a site (site_id)" }, 400);
     }
     if (!await agentCanAccessSite(c.env.DB, admin, siteId)) {
-      return c.json({ success: false, message: "\u65E0\u6743\u5728\u8BE5\u7AD9\u70B9\u521B\u5EFA\u8868\u5355" }, 403);
+      return c.json({ success: false, message: "No permission to create forms on this site" }, 403);
     }
     if (!key) {
-      return c.json({ success: false, message: "\u8868\u5355\u8C03\u7528 Key \u4E3A\u5FC5\u586B\u9879" }, 400);
+      return c.json({ success: false, message: "Form key is required" }, 400);
     }
     if (!translations_json || typeof translations_json !== "object") {
-      return c.json({ success: false, message: "\u8BF7\u63D0\u4F9B\u591A\u8BED\u8A00\u6587\u6848 translations_json" }, 400);
+      return c.json({ success: false, message: "translations_json is required" }, 400);
     }
     const hasTitle = Object.values(translations_json).some(
       (b) => b?.title && String(b.title).trim()
     );
     if (!hasTitle) {
-      return c.json({ success: false, message: "\u8BF7\u81F3\u5C11\u586B\u5199\u4E00\u79CD\u8BED\u8A00\u7684\u8868\u5355\u6807\u9898" }, 400);
+      return c.json({ success: false, message: "Enter a form title in at least one language" }, 400);
     }
     const cleanedKey = key.trim().toLowerCase().replace(/[^a-z0-9_]/g, "_");
     const existing = await getCustomFormByKey(c.env.DB, cleanedKey, siteId);
     if (existing) {
-      return c.json({ success: false, message: `\u8C03\u7528 Key [${cleanedKey}] \u5728\u672C\u7AD9\u5DF2\u5B58\u5728\uFF0C\u8BF7\u66F4\u6362` }, 400);
+      return c.json({ success: false, message: `Form key [${cleanedKey}] already exists on this site` }, 400);
     }
     const created = await createCustomForm(c.env.DB, {
       key: cleanedKey,
@@ -8188,23 +8188,23 @@ formsRouter.put("/admin/forms/:id", async (c) => {
     const siteId = readSiteId(c, body);
     const form = await getCustomFormById(c.env.DB, id);
     if (!form) {
-      return c.json({ success: false, message: "\u8868\u5355\u4E0D\u5B58\u5728" }, 404);
+      return c.json({ success: false, message: "Form not found" }, 404);
     }
     const effectiveSiteId = siteId || form.site_id;
     if (!effectiveSiteId || !await agentCanAccessSite(c.env.DB, admin, effectiveSiteId)) {
-      return c.json({ success: false, message: "\u65E0\u6743\u4FEE\u6539\u8BE5\u7AD9\u70B9\u8868\u5355" }, 403);
+      return c.json({ success: false, message: "No permission to edit forms on this site" }, 403);
     }
     if (form.site_id && siteId && form.site_id !== siteId) {
-      return c.json({ success: false, message: "\u8868\u5355\u4E0D\u5C5E\u4E8E\u5F53\u524D\u7AD9\u70B9" }, 403);
+      return c.json({ success: false, message: "Form does not belong to this site" }, 403);
     }
     if (!translations_json || typeof translations_json !== "object") {
-      return c.json({ success: false, message: "\u8BF7\u63D0\u4F9B\u591A\u8BED\u8A00\u6587\u6848 translations_json" }, 400);
+      return c.json({ success: false, message: "translations_json is required" }, 400);
     }
     const hasTitle = Object.values(translations_json).some(
       (b) => b?.title && String(b.title).trim()
     );
     if (!hasTitle) {
-      return c.json({ success: false, message: "\u8BF7\u81F3\u5C11\u586B\u5199\u4E00\u79CD\u8BED\u8A00\u7684\u8868\u5355\u6807\u9898" }, 400);
+      return c.json({ success: false, message: "Enter a form title in at least one language" }, 400);
     }
     await updateCustomForm(c.env.DB, id, {
       allowed_domains: "",
@@ -8226,14 +8226,14 @@ formsRouter.delete("/admin/forms/:id", async (c) => {
     const siteId = readSiteId(c);
     const form = await getCustomFormById(c.env.DB, id);
     if (!form) {
-      return c.json({ success: false, message: "\u8868\u5355\u4E0D\u5B58\u5728" }, 404);
+      return c.json({ success: false, message: "Form not found" }, 404);
     }
     const effectiveSiteId = siteId || form.site_id;
     if (!effectiveSiteId || !await agentCanAccessSite(c.env.DB, admin, effectiveSiteId)) {
-      return c.json({ success: false, message: "\u65E0\u6743\u5220\u9664\u8BE5\u7AD9\u70B9\u8868\u5355" }, 403);
+      return c.json({ success: false, message: "No permission to delete forms on this site" }, 403);
     }
     if (form.site_id && siteId && form.site_id !== siteId) {
-      return c.json({ success: false, message: "\u8868\u5355\u4E0D\u5C5E\u4E8E\u5F53\u524D\u7AD9\u70B9" }, 403);
+      return c.json({ success: false, message: "Form does not belong to this site" }, 403);
     }
     await deleteCustomForm(c.env.DB, id);
     return c.json({ success: true });
@@ -8249,14 +8249,14 @@ formsRouter.get("/admin/forms/:key/submissions", async (c) => {
     const key = c.req.param("key");
     const siteId = readSiteId(c);
     if (!siteId) {
-      return c.json({ success: false, message: "\u8BF7\u9009\u62E9\u7AD9\u70B9\uFF08site_id\uFF09" }, 400);
+      return c.json({ success: false, message: "Select a site (site_id)" }, 400);
     }
     if (!await agentCanAccessSite(c.env.DB, agent, siteId)) {
-      return c.json({ success: false, message: "\u65E0\u6743\u67E5\u770B\u8BE5\u7AD9\u70B9\u63D0\u4EA4" }, 403);
+      return c.json({ success: false, message: "No permission to view submissions on this site" }, 403);
     }
     const form = await getCustomFormByKey(c.env.DB, key, siteId);
     if (!form) {
-      return c.json({ success: false, message: "\u8868\u5355\u4E0D\u5B58\u5728\u6216\u4E0D\u5C5E\u4E8E\u5F53\u524D\u7AD9\u70B9" }, 404);
+      return c.json({ success: false, message: "Form not found or not on this site" }, 404);
     }
     const list = await getFormSubmissions(c.env.DB, key, siteId);
     return c.json({ success: true, data: list });
@@ -8281,11 +8281,11 @@ formsRouter.get("/public/forms/:key", async (c) => {
     const key = c.req.param("key");
     const site = await resolveSiteFromRequest(c.env.DB, c.req.raw);
     if (!site || site.status !== "active") {
-      return c.json({ success: false, message: "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u7AD9\u70B9\uFF0C\u65E0\u6CD5\u52A0\u8F7D\u8868\u5355" }, 403);
+      return c.json({ success: false, message: "This domain is not registered; cannot load the form" }, 403);
     }
     const form = await getCustomFormByKey(c.env.DB, key, site.id);
     if (!form || form.status === "disabled") {
-      return c.json({ success: false, message: "\u8BE5\u8868\u5355\u4E0D\u5B58\u5728\u6216\u5DF2\u505C\u7528" }, 404);
+      return c.json({ success: false, message: "Form not found or disabled" }, 404);
     }
     return c.json({
       success: true,
@@ -8309,27 +8309,27 @@ formsRouter.post("/public/forms/:key/submit", async (c) => {
       windowSec: 300
     });
     if (!rl.ok) {
-      return c.json({ success: false, message: "\u63D0\u4EA4\u8FC7\u4E8E\u9891\u7E41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5" }, 429);
+      return c.json({ success: false, message: "Too many submissions. Please try again later" }, 429);
     }
     const key = c.req.param("key");
     const site = await resolveSiteFromRequest(c.env.DB, c.req.raw);
     if (!site || site.status !== "active") {
-      return c.json({ success: false, message: "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u7AD9\u70B9\uFF0C\u7981\u6B62\u63D0\u4EA4" }, 403);
+      return c.json({ success: false, message: "This domain is not registered; submission is blocked" }, 403);
     }
     const form = await getCustomFormByKey(c.env.DB, key, site.id);
     if (!form || form.status === "disabled") {
-      return c.json({ success: false, message: "\u8BE5\u8868\u5355\u4E0D\u5B58\u5728\u6216\u5DF2\u505C\u7528" }, 404);
+      return c.json({ success: false, message: "Form not found or disabled" }, 404);
     }
     const body = await c.req.json();
     const { visitor_id, data, source_url } = body;
     if (!data || typeof data !== "object") {
-      return c.json({ success: false, message: "\u63D0\u4EA4\u6570\u636E\u683C\u5F0F\u9519\u8BEF" }, 400);
+      return c.json({ success: false, message: "Invalid submission payload" }, 400);
     }
     for (const field of form.fields) {
       if (field.required) {
         const val = data[field.key];
         if (val === void 0 || val === null || val === "" || Array.isArray(val) && val.length === 0) {
-          return c.json({ success: false, message: `\u8BF7\u586B\u5199\u5FC5\u586B\u9879\uFF1A${field.key}` }, 400);
+          return c.json({ success: false, message: `Required field missing: ${field.key}` }, 400);
         }
       }
     }
@@ -8516,7 +8516,7 @@ __name(getCmsCategories, "getCmsCategories");
 async function createCmsCategory(db, data) {
   await ensureCmsTables(db);
   if (!data.site_id)
-    throw new Error("site_id \u4E3A\u5FC5\u586B\u9879");
+    throw new Error("site_id is required");
   const now = Date.now();
   const id = data.id || `cat_${crypto.randomUUID()}`;
   const siteId = data.site_id;
@@ -8696,7 +8696,7 @@ __name(getCmsArticleById, "getCmsArticleById");
 async function createCmsArticle(db, data) {
   await ensureCmsTables(db);
   if (!data.site_id)
-    throw new Error("site_id \u4E3A\u5FC5\u586B\u9879");
+    throw new Error("site_id is required");
   const now = Date.now();
   const id = data.id || `art_${crypto.randomUUID()}`;
   const siteId = data.site_id;
@@ -8895,7 +8895,7 @@ __name(getCmsProductById, "getCmsProductById");
 async function createCmsProduct(db, data) {
   await ensureCmsTables(db);
   if (!data.site_id)
-    throw new Error("site_id \u4E3A\u5FC5\u586B\u9879");
+    throw new Error("site_id is required");
   const now = Date.now();
   const id = data.id || `prod_${crypto.randomUUID()}`;
   const siteId = data.site_id;
@@ -9035,10 +9035,10 @@ async function requireAdminSiteAccess(c, siteId) {
   if (error3)
     return error3;
   if (!siteId) {
-    return c.json({ status: 400, msg: "\u8BF7\u9009\u62E9\u7AD9\u70B9\uFF08site_id / X-Site-Id\uFF09", data: null }, 400);
+    return c.json({ status: 400, msg: "Select a site (site_id / X-Site-Id)", data: null }, 400);
   }
   if (!await agentCanAccessSite(c.env.DB, agent, siteId)) {
-    return c.json({ status: 403, msg: "\u65E0\u6743\u8BBF\u95EE\u8BE5\u7AD9\u70B9\u5185\u5BB9", data: null }, 403);
+    return c.json({ status: 403, msg: "No permission to access content on this site", data: null }, 403);
   }
   return agent;
 }
@@ -9054,14 +9054,14 @@ cmsRouter.get("/cms/categories", async (c) => {
   try {
     const siteId = await resolvePublicSiteId(c);
     if (!siteId) {
-      return c.json({ status: 403, msg: "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u7AD9\u70B9", data: null }, 403);
+      return c.json({ status: 403, msg: "This domain is not registered to a site", data: null }, 403);
     }
     const type = c.req.query("type");
     const locale = c.req.query("locale") || c.req.query("lang");
     const list = await getCmsCategories(c.env.DB, type, locale, siteId);
     return c.json({ status: 200, msg: "ok", data: list }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u83B7\u53D6\u5206\u7C7B\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to load categories: " + err.message, data: null }, 500);
   }
 });
 cmsRouter.get("/admin/cms/categories", async (c) => {
@@ -9075,7 +9075,7 @@ cmsRouter.get("/admin/cms/categories", async (c) => {
     const list = await getCmsCategories(c.env.DB, type, locale, siteId);
     return c.json({ status: 200, msg: "ok", data: list }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u83B7\u53D6\u5206\u7C7B\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to load categories: " + err.message, data: null }, 500);
   }
 });
 cmsRouter.post("/admin/cms/categories", async (c) => {
@@ -9086,12 +9086,12 @@ cmsRouter.post("/admin/cms/categories", async (c) => {
     if (access instanceof Response)
       return access;
     if (!body.slug || !body.name_json && !body.name) {
-      return c.json({ status: 400, msg: "\u5206\u7C7B\u6807\u8BC6 (slug) \u4E0E\u5206\u7C7B\u540D\u79F0\u4E3A\u5FC5\u586B\u9879", data: null }, 400);
+      return c.json({ status: 400, msg: "Category slug and name are required", data: null }, 400);
     }
     const created = await createCmsCategory(c.env.DB, { ...body, site_id: siteId });
     return c.json({ status: 200, msg: "ok", data: created }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u521B\u5EFA\u5206\u7C7B\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to create category: " + err.message, data: null }, 500);
   }
 });
 cmsRouter.put("/admin/cms/categories/:id", async (c) => {
@@ -9105,7 +9105,7 @@ cmsRouter.put("/admin/cms/categories/:id", async (c) => {
     await updateCmsCategory(c.env.DB, id, body);
     return c.json({ status: 200, msg: "ok", data: null }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u66F4\u65B0\u5206\u7C7B\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to update category: " + err.message, data: null }, 500);
   }
 });
 cmsRouter.delete("/admin/cms/categories/:id", async (c) => {
@@ -9118,14 +9118,14 @@ cmsRouter.delete("/admin/cms/categories/:id", async (c) => {
     await deleteCmsCategory(c.env.DB, id);
     return c.json({ status: 200, msg: "ok", data: null }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u5220\u9664\u5206\u7C7B\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to delete category: " + err.message, data: null }, 500);
   }
 });
 cmsRouter.get("/cms/articles", async (c) => {
   try {
     const siteId = await resolvePublicSiteId(c);
     if (!siteId) {
-      return c.json({ status: 403, msg: "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u7AD9\u70B9", data: null }, 403);
+      return c.json({ status: 403, msg: "This domain is not registered to a site", data: null }, 403);
     }
     const categoryId = c.req.query("categoryId") || c.req.query("taxonomyId");
     const status = c.req.query("status");
@@ -9144,7 +9144,7 @@ cmsRouter.get("/cms/articles", async (c) => {
     });
     return c.json({ status: 200, msg: "ok", data: result }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u83B7\u53D6\u6587\u7AE0\u5217\u8868\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to load articles: " + err.message, data: null }, 500);
   }
 });
 cmsRouter.get("/admin/cms/articles", async (c) => {
@@ -9170,24 +9170,24 @@ cmsRouter.get("/admin/cms/articles", async (c) => {
     });
     return c.json({ status: 200, msg: "ok", data: result }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u83B7\u53D6\u6587\u7AE0\u5217\u8868\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to load articles: " + err.message, data: null }, 500);
   }
 });
 cmsRouter.get("/cms/articles/:id", async (c) => {
   try {
     const siteId = await resolvePublicSiteId(c);
     if (!siteId) {
-      return c.json({ status: 403, msg: "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u7AD9\u70B9", data: null }, 403);
+      return c.json({ status: 403, msg: "This domain is not registered to a site", data: null }, 403);
     }
     const id = c.req.param("id");
     const locale = c.req.query("locale") || c.req.query("lang");
     const article = await getCmsArticleById(c.env.DB, id, locale, siteId);
     if (!article) {
-      return c.json({ status: 404, msg: "\u6587\u7AE0\u4E0D\u5B58\u5728", data: null }, 404);
+      return c.json({ status: 404, msg: "Article not found", data: null }, 404);
     }
     return c.json({ status: 200, msg: "ok", data: article }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u83B7\u53D6\u6587\u7AE0\u8BE6\u60C5\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to load article details: " + err.message, data: null }, 500);
   }
 });
 cmsRouter.get("/admin/cms/articles/:id", async (c) => {
@@ -9200,11 +9200,11 @@ cmsRouter.get("/admin/cms/articles/:id", async (c) => {
     const locale = c.req.query("locale") || c.req.query("lang");
     const article = await getCmsArticleById(c.env.DB, id, locale, siteId);
     if (!article) {
-      return c.json({ status: 404, msg: "\u6587\u7AE0\u4E0D\u5B58\u5728", data: null }, 404);
+      return c.json({ status: 404, msg: "Article not found", data: null }, 404);
     }
     return c.json({ status: 200, msg: "ok", data: article }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u83B7\u53D6\u6587\u7AE0\u8BE6\u60C5\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to load article details: " + err.message, data: null }, 500);
   }
 });
 cmsRouter.post("/admin/cms/articles", async (c) => {
@@ -9215,12 +9215,12 @@ cmsRouter.post("/admin/cms/articles", async (c) => {
     if (access instanceof Response)
       return access;
     if (!body.slug) {
-      return c.json({ status: 400, msg: "\u6587\u7AE0\u6807\u8BC6 (slug) \u4E3A\u5FC5\u586B\u9879", data: null }, 400);
+      return c.json({ status: 400, msg: "Article slug is required", data: null }, 400);
     }
     const created = await createCmsArticle(c.env.DB, { ...body, site_id: siteId });
     return c.json({ status: 200, msg: "ok", data: created }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u521B\u5EFA\u6587\u7AE0\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to create article: " + err.message, data: null }, 500);
   }
 });
 cmsRouter.put("/admin/cms/articles/:id", async (c) => {
@@ -9234,7 +9234,7 @@ cmsRouter.put("/admin/cms/articles/:id", async (c) => {
     await updateCmsArticle(c.env.DB, id, body);
     return c.json({ status: 200, msg: "ok", data: null }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u66F4\u65B0\u6587\u7AE0\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to update article: " + err.message, data: null }, 500);
   }
 });
 cmsRouter.delete("/admin/cms/articles/:id", async (c) => {
@@ -9247,14 +9247,14 @@ cmsRouter.delete("/admin/cms/articles/:id", async (c) => {
     await deleteCmsArticle(c.env.DB, id);
     return c.json({ status: 200, msg: "ok", data: null }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u5220\u9664\u6587\u7AE0\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to delete article: " + err.message, data: null }, 500);
   }
 });
 cmsRouter.get("/cms/products", async (c) => {
   try {
     const siteId = await resolvePublicSiteId(c);
     if (!siteId) {
-      return c.json({ status: 403, msg: "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u7AD9\u70B9", data: null }, 403);
+      return c.json({ status: 403, msg: "This domain is not registered to a site", data: null }, 403);
     }
     const categoryId = c.req.query("categoryId") || c.req.query("taxonomyId");
     const status = c.req.query("status");
@@ -9273,7 +9273,7 @@ cmsRouter.get("/cms/products", async (c) => {
     });
     return c.json({ status: 200, msg: "ok", data: result }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u83B7\u53D6\u4EA7\u54C1\u5217\u8868\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to load products: " + err.message, data: null }, 500);
   }
 });
 cmsRouter.get("/admin/cms/products", async (c) => {
@@ -9299,24 +9299,24 @@ cmsRouter.get("/admin/cms/products", async (c) => {
     });
     return c.json({ status: 200, msg: "ok", data: result }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u83B7\u53D6\u4EA7\u54C1\u5217\u8868\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to load products: " + err.message, data: null }, 500);
   }
 });
 cmsRouter.get("/cms/products/:id", async (c) => {
   try {
     const siteId = await resolvePublicSiteId(c);
     if (!siteId) {
-      return c.json({ status: 403, msg: "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u7AD9\u70B9", data: null }, 403);
+      return c.json({ status: 403, msg: "This domain is not registered to a site", data: null }, 403);
     }
     const id = c.req.param("id");
     const locale = c.req.query("locale") || c.req.query("lang");
     const product = await getCmsProductById(c.env.DB, id, locale, siteId);
     if (!product) {
-      return c.json({ status: 404, msg: "\u4EA7\u54C1\u4E0D\u5B58\u5728", data: null }, 404);
+      return c.json({ status: 404, msg: "Product not found", data: null }, 404);
     }
     return c.json({ status: 200, msg: "ok", data: product }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u83B7\u53D6\u4EA7\u54C1\u8BE6\u60C5\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to load product details: " + err.message, data: null }, 500);
   }
 });
 cmsRouter.get("/admin/cms/products/:id", async (c) => {
@@ -9329,11 +9329,11 @@ cmsRouter.get("/admin/cms/products/:id", async (c) => {
     const locale = c.req.query("locale") || c.req.query("lang");
     const product = await getCmsProductById(c.env.DB, id, locale, siteId);
     if (!product) {
-      return c.json({ status: 404, msg: "\u4EA7\u54C1\u4E0D\u5B58\u5728", data: null }, 404);
+      return c.json({ status: 404, msg: "Product not found", data: null }, 404);
     }
     return c.json({ status: 200, msg: "ok", data: product }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u83B7\u53D6\u4EA7\u54C1\u8BE6\u60C5\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to load product details: " + err.message, data: null }, 500);
   }
 });
 cmsRouter.post("/admin/cms/products", async (c) => {
@@ -9344,12 +9344,12 @@ cmsRouter.post("/admin/cms/products", async (c) => {
     if (access instanceof Response)
       return access;
     if (!body.slug) {
-      return c.json({ status: 400, msg: "\u4EA7\u54C1\u6807\u8BC6 (slug) \u4E3A\u5FC5\u586B\u9879", data: null }, 400);
+      return c.json({ status: 400, msg: "Product slug is required", data: null }, 400);
     }
     const created = await createCmsProduct(c.env.DB, { ...body, site_id: siteId });
     return c.json({ status: 200, msg: "ok", data: created }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u521B\u5EFA\u4EA7\u54C1\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to create product: " + err.message, data: null }, 500);
   }
 });
 cmsRouter.put("/admin/cms/products/:id", async (c) => {
@@ -9363,7 +9363,7 @@ cmsRouter.put("/admin/cms/products/:id", async (c) => {
     await updateCmsProduct(c.env.DB, id, body);
     return c.json({ status: 200, msg: "ok", data: null }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u66F4\u65B0\u4EA7\u54C1\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to update product: " + err.message, data: null }, 500);
   }
 });
 cmsRouter.delete("/admin/cms/products/:id", async (c) => {
@@ -9376,7 +9376,7 @@ cmsRouter.delete("/admin/cms/products/:id", async (c) => {
     await deleteCmsProduct(c.env.DB, id);
     return c.json({ status: 200, msg: "ok", data: null }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u5220\u9664\u4EA7\u54C1\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to delete product: " + err.message, data: null }, 500);
   }
 });
 
@@ -9409,24 +9409,24 @@ kbRouter.post("/kb/ask", async (c) => {
     const body = await c.req.json();
     const question = body.question?.trim();
     if (!question) {
-      return c.json({ status: 400, msg: "\u95EE\u9898\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A", data: null }, 400);
+      return c.json({ status: 400, msg: "Question cannot be empty", data: null }, 400);
     }
     const history = Array.isArray(body.history) ? body.history : [];
     const result = await askKnowledge(c.env, question, history);
     return c.json({ status: 200, msg: "ok", data: result }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u77E5\u8BC6\u5E93\u95EE\u7B54\u5F02\u5E38: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Knowledge Q&A error: " + err.message, data: null }, 500);
   }
 });
 kbRouter.post("/kb/search", async (c) => {
   try {
     if (!checkApiKey(c)) {
-      return c.json({ status: 401, msg: "\u672A\u7ECF\u6388\u6743: API Key \u65E0\u6548\u6216\u672A\u63D0\u4F9B", data: null }, 401);
+      return c.json({ status: 401, msg: "Unauthorized: invalid or missing API key", data: null }, 401);
     }
     const body = await c.req.json();
     const query = body.query?.trim();
     if (!query) {
-      return c.json({ status: 400, msg: "\u641C\u7D22\u5173\u952E\u8BCD\u4E0D\u80FD\u4E3A\u7A7A", data: null }, 400);
+      return c.json({ status: 400, msg: "Search query cannot be empty", data: null }, 400);
     }
     const domains = body.domain ? [body.domain] : body.domains;
     const results = await searchKnowledge(c.env, query, {
@@ -9436,13 +9436,13 @@ kbRouter.post("/kb/search", async (c) => {
     });
     return c.json({ status: 200, msg: "ok", data: results }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u68C0\u7D22\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Retrieval failed: " + err.message, data: null }, 500);
   }
 });
 kbRouter.get("/kb/products-data", async (c) => {
   try {
     if (!checkApiKey(c)) {
-      return c.json({ status: 401, msg: "\u672A\u7ECF\u6388\u6743: API Key \u65E0\u6548\u6216\u672A\u63D0\u4F9B", data: null }, 401);
+      return c.json({ status: 401, msg: "Unauthorized: invalid or missing API key", data: null }, 401);
     }
     const search = c.req.query("search");
     const categoryId = c.req.query("categoryId");
@@ -9473,19 +9473,19 @@ kbRouter.get("/kb/products-data", async (c) => {
     }));
     return c.json({ status: 200, msg: "ok", data: formattedList }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u83B7\u53D6\u4EA7\u54C1\u6570\u636E\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to load product data: " + err.message, data: null }, 500);
   }
 });
 kbRouter.get("/kb/products-data/:id", async (c) => {
   try {
     if (!checkApiKey(c)) {
-      return c.json({ status: 401, msg: "\u672A\u7ECF\u6388\u6743: API Key \u65E0\u6548\u6216\u672A\u63D0\u4F9B", data: null }, 401);
+      return c.json({ status: 401, msg: "Unauthorized: invalid or missing API key", data: null }, 401);
     }
     const id = c.req.param("id");
     const lang = c.req.query("lang") || "zh-CN";
     const product = await getCmsProductById(c.env.DB, id, lang);
     if (!product) {
-      return c.json({ status: 404, msg: "\u4EA7\u54C1\u672A\u627E\u5230", data: null }, 404);
+      return c.json({ status: 404, msg: "Product not found", data: null }, 404);
     }
     const productData = {
       id: product.id,
@@ -9513,7 +9513,7 @@ kbRouter.get("/kb/products-data/:id", async (c) => {
       }
     }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u83B7\u53D6\u4EA7\u54C1\u8BE6\u60C5\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to load product details: " + err.message, data: null }, 500);
   }
 });
 kbRouter.get("/admin/kb/documents", async (c) => {
@@ -9528,7 +9528,7 @@ kbRouter.get("/admin/kb/documents", async (c) => {
     });
     return c.json({ status: 200, msg: "ok", data: docs }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u83B7\u53D6\u77E5\u8BC6\u5E93\u5217\u8868\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to load knowledge base: " + err.message, data: null }, 500);
   }
 });
 kbRouter.get("/admin/kb/documents/:id", async (c) => {
@@ -9536,11 +9536,11 @@ kbRouter.get("/admin/kb/documents/:id", async (c) => {
     const id = c.req.param("id");
     const doc = await getKbDocumentById(c.env.DB, id);
     if (!doc) {
-      return c.json({ status: 404, msg: "\u6587\u6863\u4E0D\u5B58\u5728", data: null }, 404);
+      return c.json({ status: 404, msg: "Document not found", data: null }, 404);
     }
     return c.json({ status: 200, msg: "ok", data: doc }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u83B7\u53D6\u6587\u6863\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to load documents: " + err.message, data: null }, 500);
   }
 });
 kbRouter.post("/admin/kb/documents", async (c) => {
@@ -9548,7 +9548,7 @@ kbRouter.post("/admin/kb/documents", async (c) => {
     const body = await c.req.json();
     const { id, domain: domain2 = "support", title: title2, content, rel_product_id, tags } = body;
     if (!title2?.trim() || !content?.trim()) {
-      return c.json({ status: 400, msg: "\u6587\u6863\u6807\u9898\u4E0E\u5185\u5BB9\u5747\u4E3A\u5FC5\u586B\u9879", data: null }, 400);
+      return c.json({ status: 400, msg: "Document title and body are required", data: null }, 400);
     }
     const docId = id || `doc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const now = Date.now();
@@ -9568,11 +9568,11 @@ kbRouter.post("/admin/kb/documents", async (c) => {
     const indexRes = await indexDocument(c.env, doc);
     return c.json({
       status: 200,
-      msg: "\u6587\u6863\u4FDD\u5B58\u6210\u529F",
+      msg: "Document saved",
       data: { id: docId, chunks_count: indexRes.chunksCount, status: indexRes.success ? "ready" : "error" }
     }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u4FDD\u5B58\u77E5\u8BC6\u5E93\u6587\u6863\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to save knowledge document: " + err.message, data: null }, 500);
   }
 });
 kbRouter.delete("/admin/kb/documents/:id", async (c) => {
@@ -9586,9 +9586,9 @@ kbRouter.delete("/admin/kb/documents/:id", async (c) => {
         console.warn("Failed to delete vectors from Vectorize", e);
       }
     }
-    return c.json({ status: 200, msg: "\u6587\u6863\u4E0E\u5411\u91CF\u5DF2\u6E05\u9664", data: { id, deleted_chunks: deletedVecIds.length } }, 200);
+    return c.json({ status: 200, msg: "Document and vectors removed", data: { id, deleted_chunks: deletedVecIds.length } }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u5220\u9664\u6587\u6863\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to delete document: " + err.message, data: null }, 500);
   }
 });
 kbRouter.post("/admin/kb/documents/:id/reindex", async (c) => {
@@ -9596,12 +9596,12 @@ kbRouter.post("/admin/kb/documents/:id/reindex", async (c) => {
     const id = c.req.param("id");
     const doc = await getKbDocumentById(c.env.DB, id);
     if (!doc) {
-      return c.json({ status: 404, msg: "\u6587\u6863\u4E0D\u5B58\u5728", data: null }, 404);
+      return c.json({ status: 404, msg: "Document not found", data: null }, 404);
     }
     const indexRes = await indexDocument(c.env, doc);
-    return c.json({ status: 200, msg: "\u91CD\u65B0\u7D22\u5F15\u6210\u529F", data: indexRes }, 200);
+    return c.json({ status: 200, msg: "Re-index succeeded", data: indexRes }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u91CD\u65B0\u7D22\u5F15\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Re-index failed: " + err.message, data: null }, 500);
   }
 });
 kbRouter.post("/admin/kb/test-query", async (c) => {
@@ -9609,7 +9609,7 @@ kbRouter.post("/admin/kb/test-query", async (c) => {
     const body = await c.req.json();
     const query = body.query?.trim();
     if (!query) {
-      return c.json({ status: 400, msg: "\u8C03\u8BD5\u63D0\u95EE\u4E0D\u80FD\u4E3A\u7A7A", data: null }, 400);
+      return c.json({ status: 400, msg: "Debug question cannot be empty", data: null }, 400);
     }
     const domains = body.domain ? [body.domain] : void 0;
     const results = await searchKnowledge(c.env, query, {
@@ -9620,7 +9620,7 @@ kbRouter.post("/admin/kb/test-query", async (c) => {
     });
     return c.json({ status: 200, msg: "ok", data: results }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u8C03\u8BD5\u67E5\u8BE2\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Debug query failed: " + err.message, data: null }, 500);
   }
 });
 kbRouter.post("/admin/kb/sync-from-cms", async (c) => {
@@ -9685,9 +9685,9 @@ ${articleContent}`;
       await indexDocument(c.env, doc);
       importedCount++;
     }
-    return c.json({ status: 200, msg: `\u6210\u529F\u540C\u6B65 ${importedCount} \u6761\u5185\u5BB9\u81F3\u77E5\u8BC6\u5E93`, data: { count: importedCount } }, 200);
+    return c.json({ status: 200, msg: `Synced ${importedCount} items into the knowledge base`, data: { count: importedCount } }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u4ECE CMS \u540C\u6B65\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "CMS sync failed: " + err.message, data: null }, 500);
   }
 });
 kbRouter.get("/admin/kb/ai-config", async (c) => {
@@ -9718,7 +9718,7 @@ kbRouter.get("/admin/kb/ai-config", async (c) => {
       }
     }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u83B7\u53D6 AI \u914D\u7F6E\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to load AI settings: " + err.message, data: null }, 500);
   }
 });
 kbRouter.post("/admin/kb/ai-config", async (c) => {
@@ -9738,33 +9738,33 @@ kbRouter.post("/admin/kb/ai-config", async (c) => {
       updates["ai_ticket_auto_reply"] = String(body.ticket_auto_reply);
     }
     await updateSystemSettings(c.env.DB, updates);
-    return c.json({ status: 200, msg: "AI \u5BA2\u670D\u914D\u7F6E\u5DF2\u66F4\u65B0\u5E76\u5B9E\u65F6\u751F\u6548", data: null }, 200);
+    return c.json({ status: 200, msg: "AI agent settings updated", data: null }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u4FDD\u5B58 AI \u914D\u7F6E\u5931\u8D25: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Failed to save AI settings: " + err.message, data: null }, 500);
   }
 });
 kbRouter.post("/admin/kb/test-channel", async (c) => {
   try {
     const channel2 = await c.req.json();
     if (!channel2 || !channel2.model) {
-      return c.json({ status: 400, msg: "\u901A\u9053\u914D\u7F6E\u4E0D\u5B8C\u6574", data: null }, 400);
+      return c.json({ status: 400, msg: "Channel configuration is incomplete", data: null }, 400);
     }
     const testRes = await testAiChannel(c.env, channel2);
     return c.json({ status: 200, msg: "ok", data: testRes }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "\u6D4B\u8BD5\u5F02\u5E38: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "Test error: " + err.message, data: null }, 500);
   }
 });
 kbRouter.post("/admin/kb/translate", async (c) => {
   try {
     const body = await c.req.json();
     if (!body || !body.sourceLang || !body.targetLangs || !body.fields) {
-      return c.json({ status: 400, msg: "\u7F3A\u5C11\u7FFB\u8BD1\u5FC5\u8981\u53C2\u6570", data: null }, 400);
+      return c.json({ status: 400, msg: "Missing required translate parameters", data: null }, 400);
     }
     const result = await translateContentWithAi(c.env, body);
     return c.json({ status: 200, msg: "ok", data: result }, 200);
   } catch (err) {
-    return c.json({ status: 500, msg: "AI \u7FFB\u8BD1\u5F02\u5E38: " + err.message, data: null }, 500);
+    return c.json({ status: 500, msg: "AI translate error: " + err.message, data: null }, 500);
   }
 });
 
@@ -10017,7 +10017,7 @@ __name(exchangeGaCode, "exchangeGaCode");
 async function refreshAccessToken(env2, db) {
   const refresh = await getSystemSetting(db, GA_REFRESH_KEY);
   if (!refresh)
-    throw new Error("\u5C1A\u672A\u8FDE\u63A5 Google \u8D26\u53F7");
+    throw new Error("Google account not connected");
   const cachedRaw = await getSystemSetting(db, GA_ACCESS_CACHE_KEY);
   if (cachedRaw) {
     try {
@@ -10030,7 +10030,7 @@ async function refreshAccessToken(env2, db) {
   }
   const creds = await resolveGaOAuthCreds(env2, db);
   if (!creds.clientId || !creds.clientSecret) {
-    throw new Error("\u8BF7\u5148\u5728\u300CGoogle \u5206\u6790\u300D\u8BBE\u7F6E\u4E2D\u586B\u5199\u5BA2\u6237\u7AEF ID \u4E0E\u5BA2\u6237\u7AEF\u5BC6\u94A5");
+    throw new Error("Enter Client ID and Client secret in Google Analytics settings first");
   }
   const body = new URLSearchParams({
     client_id: creds.clientId,
@@ -10194,7 +10194,7 @@ analyticsRouter.get("/analytics/ga/status", async (c) => {
       return agent;
     const siteId = readSiteId3(c);
     if (siteId && !await agentCanAccessSite(c.env.DB, agent, siteId)) {
-      return c.json({ success: false, message: "\u65E0\u6743\u8BBF\u95EE\u8BE5\u7AD9\u70B9" }, 403);
+      return c.json({ success: false, message: "No permission to access this site" }, 403);
     }
     const refresh = await getSystemSetting(c.env.DB, GA_REFRESH_KEY);
     const email = await getSystemSetting(c.env.DB, "ga_connected_email") || "";
@@ -10237,7 +10237,7 @@ analyticsRouter.get("/analytics/ga/oauth/start", async (c) => {
       return c.json(
         {
           success: false,
-          message: "\u8BF7\u5148\u5728\u672C\u9875\u586B\u5199\u300CGoogle \u5BA2\u6237\u7AEF ID\u300D\u548C\u300C\u5BA2\u6237\u7AEF\u5BC6\u94A5\u300D\u5E76\u4FDD\u5B58\uFF0C\u518D\u70B9\u51FB\u8FDE\u63A5\uFF08\u4E5F\u53EF\u7531\u90E8\u7F72\u65B9\u5728 Cloudflare Secrets \u9884\u7F6E\uFF09"
+          message: "Enter Google Client ID and Client secret on this page and save, then connect (or set Cloudflare Secrets)"
         },
         400
       );
@@ -10315,7 +10315,7 @@ analyticsRouter.get("/analytics/ga/properties", async (c) => {
     if (isErrorResponse(admin))
       return admin;
     if (!await gaOAuthConfigured(c.env, c.env.DB)) {
-      return c.json({ success: false, message: "\u8BF7\u5148\u586B\u5199\u5E76\u4FDD\u5B58 Google \u5BA2\u6237\u7AEF ID/\u5BC6\u94A5" }, 400);
+      return c.json({ success: false, message: "Save Google Client ID and secret first" }, 400);
     }
     const list = await listGaProperties(c.env, c.env.DB);
     return c.json({ success: true, data: list });
@@ -10331,14 +10331,14 @@ analyticsRouter.post("/analytics/ga/property", async (c) => {
     const body = await c.req.json();
     const siteId = readSiteId3(c, body);
     if (!siteId) {
-      return c.json({ success: false, message: "\u8BF7\u9009\u62E9\u7AD9\u70B9\u540E\u518D\u7ED1\u5B9A\u5A92\u4F53\u8D44\u6E90" }, 400);
+      return c.json({ success: false, message: "Select a site before linking a GA4 property" }, 400);
     }
     if (!await agentCanAccessSite(c.env.DB, admin, siteId)) {
-      return c.json({ success: false, message: "\u65E0\u6743\u64CD\u4F5C\u8BE5\u7AD9\u70B9" }, 403);
+      return c.json({ success: false, message: "No permission to manage this site" }, 403);
     }
     const id = String(body.property_id || "").replace(/^properties\//, "").trim();
     if (!id)
-      return c.json({ success: false, message: "\u8BF7\u9009\u62E9 GA4 \u5A92\u4F53\u8D44\u6E90" }, 400);
+      return c.json({ success: false, message: "Select a GA4 property" }, 400);
     const updates = { ga_property_id: id };
     if (body.report_enabled !== void 0) {
       updates.ga_report_enabled = body.report_enabled ? "1" : "0";
@@ -10358,22 +10358,22 @@ analyticsRouter.get("/analytics/ga/report", async (c) => {
       return agent;
     const siteId = readSiteId3(c);
     if (!siteId) {
-      return c.json({ success: false, message: "\u8BF7\u9009\u62E9\u7AD9\u70B9\u540E\u518D\u67E5\u770B GA \u62A5\u544A" }, 400);
+      return c.json({ success: false, message: "Select a site before viewing GA reports" }, 400);
     }
     if (!await agentCanAccessSite(c.env.DB, agent, siteId)) {
-      return c.json({ success: false, message: "\u65E0\u6743\u8BBF\u95EE\u8BE5\u7AD9\u70B9" }, 403);
+      return c.json({ success: false, message: "No permission to access this site" }, 403);
     }
     const siteMap = await getMergedSiteSettings(c.env.DB, siteId);
     if (siteMap.ga_report_enabled !== "1") {
-      return c.json({ success: false, message: "\u5DF2\u5173\u95ED\u672C\u7AD9 GA \u62A5\u544A\u67E5\u770B" }, 400);
+      return c.json({ success: false, message: "GA reporting disabled for this site" }, 400);
     }
     const propertyId = siteMap.ga_property_id || "";
     if (!propertyId) {
-      return c.json({ success: false, message: "\u8BF7\u5148\u4E3A\u672C\u7AD9\u9009\u62E9 GA4 \u5A92\u4F53\u8D44\u6E90" }, 400);
+      return c.json({ success: false, message: "Select a GA4 property for this site first" }, 400);
     }
     const kind = c.req.query("kind") || "overview";
     if (!["overview", "sources", "pages"].includes(kind)) {
-      return c.json({ success: false, message: "\u65E0\u6548\u7684\u62A5\u544A\u7C7B\u578B" }, 400);
+      return c.json({ success: false, message: "Invalid report type" }, 400);
     }
     const days = Number(c.req.query("days") || "7");
     const site = (c.req.query("site") || "").trim().toLowerCase().replace(/^www\./, "");
@@ -10465,11 +10465,11 @@ sitesRouter.get("/sites/:id", async (c) => {
       return agent;
     const id = c.req.param("id");
     if (!await agentCanAccessSite(c.env.DB, agent, id)) {
-      return c.json({ success: false, message: "\u65E0\u6743\u8BBF\u95EE\u8BE5\u7AD9\u70B9" }, 403);
+      return c.json({ success: false, message: "No permission to access this site" }, 403);
     }
     const site = await getSiteById(c.env.DB, id);
     if (!site)
-      return c.json({ success: false, message: "\u7AD9\u70B9\u4E0D\u5B58\u5728" }, 404);
+      return c.json({ success: false, message: "Site not found" }, 404);
     return c.json({ success: true, data: site });
   } catch (err) {
     return c.json({ success: false, message: err.message }, 500);
@@ -10531,7 +10531,7 @@ sitesRouter.get("/sites/:id/settings", async (c) => {
       return agent;
     const id = c.req.param("id");
     if (!await agentCanAccessSite(c.env.DB, agent, id)) {
-      return c.json({ success: false, message: "\u65E0\u6743\u8BBF\u95EE\u8BE5\u7AD9\u70B9" }, 403);
+      return c.json({ success: false, message: "No permission to access this site" }, 403);
     }
     const merged = await getMergedSiteSettings(c.env.DB, id);
     const siteOnly = await getSiteSettingsMap(c.env.DB, id);
@@ -10548,7 +10548,7 @@ sitesRouter.post("/sites/:id/settings", async (c) => {
     const id = c.req.param("id");
     const site = await getSiteById(c.env.DB, id);
     if (!site)
-      return c.json({ success: false, message: "\u7AD9\u70B9\u4E0D\u5B58\u5728" }, 404);
+      return c.json({ success: false, message: "Site not found" }, 404);
     const body = await c.req.json();
     const sitePatch = {};
     const globalPatch = {};
@@ -10609,6 +10609,325 @@ sitesRouter.get("/agents-with-sites", async (c) => {
     return c.json({ success: false, message: err.message }, 500);
   }
 });
+
+// src/worker/i18n/index.ts
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+init_performance2();
+
+// src/worker/i18n/apiT.ts
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+init_performance2();
+
+// src/worker/i18n/apiMessages.zh-CN.ts
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+init_performance2();
+var apiMessagesZhCN = {
+  "Enter Google Client ID and Client secret on this page and save, then connect (or set Cloudflare Secrets)": "\u8BF7\u5148\u5728\u672C\u9875\u586B\u5199\u300CGoogle \u5BA2\u6237\u7AEF ID\u300D\u548C\u300C\u5BA2\u6237\u7AEF\u5BC6\u94A5\u300D\u5E76\u4FDD\u5B58\uFF0C\u518D\u70B9\u51FB\u8FDE\u63A5\uFF08\u4E5F\u53EF\u7531\u90E8\u7F72\u65B9\u5728 Cloudflare Secrets \u9884\u7F6E\uFF09",
+  "No agents are online right now. Please leave a message and we will reply soon.": "\u5F53\u524D\u5750\u5E2D\u6682\u672A\u5728\u7EBF\uFF0C\u8BF7\u76F4\u63A5\u7559\u8A00\uFF0C\u6211\u4EEC\u7A0D\u540E\u5C06\u56DE\u590D\u60A8\u3002",
+  "Microphone or camera permission denied. Enable it in browser settings": "\u9EA6\u514B\u98CE\u6216\u6444\u50CF\u5934\u6743\u9650\u5DF2\u88AB\u62D2\u7EDD\uFF0C\u8BF7\u5728\u624B\u673A\u6D4F\u89C8\u5668\u8BBE\u7F6E\u4E2D\u5F00\u542F",
+  "Enter Client ID and Client secret in Google Analytics settings first": "\u8BF7\u5148\u5728\u300CGoogle \u5206\u6790\u300D\u8BBE\u7F6E\u4E2D\u586B\u5199\u5BA2\u6237\u7AEF ID \u4E0E\u5BA2\u6237\u7AEF\u5BC6\u94A5",
+  "Your message was submitted. An agent will contact you soon.": "\u60A8\u7684\u7559\u8A00\u5DF2\u6210\u529F\u63D0\u4EA4\uFF0C\u5BA2\u670D\u5C06\u5C3D\u5FEB\u4E0E\u60A8\u8054\u7CFB\uFF01",
+  "This domain is not registered; live chat is unavailable": "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u4E3A\u6388\u6743\u7AD9\u70B9\uFF0C\u65E0\u6CD5\u4F7F\u7528\u5BA2\u670D",
+  "Unauthorized: permissions changed. Please sign in again": "\u672A\u6388\u6743\uFF1A\u6743\u9650\u5DF2\u53D8\u66F4\uFF0C\u8BF7\u91CD\u65B0\u767B\u5F55",
+  "Human verification failed. Please refresh and try again": "\u4EBA\u673A\u9A8C\u8BC1\u5931\u8D25\uFF0C\u8BF7\u5237\u65B0\u91CD\u8BD5",
+  "No valid email API key configured (Resend or UsePlunk)": "\u672A\u914D\u7F6E\u6709\u6548\u7684\u90AE\u4EF6\u670D\u52A1\u5BC6\u94A5 (Resend \u6216 UsePlunk)",
+  "Synced ${importedCount} items into the knowledge base": "\u6210\u529F\u540C\u6B65 ${importedCount} \u6761\u5185\u5BB9\u81F3\u77E5\u8BC6\u5E93",
+  "Form key [${cleanedKey}] already exists on this site": "\u8C03\u7528 Key [${cleanedKey}] \u5728\u672C\u7AD9\u5DF2\u5B58\u5728\uFF0C\u8BF7\u66F4\u6362",
+  "This domain is not registered; submission is blocked": "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u7AD9\u70B9\uFF0C\u7981\u6B62\u63D0\u4EA4",
+  "This domain is not registered; cannot load the form": "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u7AD9\u70B9\uFF0C\u65E0\u6CD5\u52A0\u8F7D\u8868\u5355",
+  "This domain is not registered as an authorized site": "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u4E3A\u6388\u6743\u7AD9\u70B9",
+  "Unauthorized: session expired. Please sign in again": "\u672A\u6388\u6743\uFF1A\u767B\u5F55\u5DF2\u5931\u6548\uFF0C\u8BF7\u91CD\u65B0\u767B\u5F55",
+  "No permission to access conversations on this site": "\u65E0\u6743\u8BBF\u95EE\u8BE5\u7AD9\u70B9\u4F1A\u8BDD",
+  "Too many login attempts. Please try again later": "\u767B\u5F55\u5C1D\u8BD5\u8FC7\u4E8E\u9891\u7E41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5",
+  "Current password is required to change password": "\u4FEE\u6539\u5BC6\u7801\u5FC5\u987B\u8F93\u5165\u539F\u5BC6\u7801",
+  "No permission to view submissions on this site": "\u65E0\u6743\u67E5\u770B\u8BE5\u7AD9\u70B9\u63D0\u4EA4",
+  "Unauthorized: no access to this conversation": "\u672A\u6388\u6743\uFF1A\u65E0\u6743\u8BBF\u95EE\u8BE5\u4F1A\u8BDD",
+  "Too many submissions. Please try again later": "\u63D0\u4EA4\u8FC7\u4E8E\u9891\u7E41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5",
+  "Private chat title and password are required": "\u8BF7\u5B8C\u6574\u586B\u5199\u79C1\u804A\u4E3B\u9898\u4E0E\u5BC6\u7801",
+  "No permission to access content on this site": "\u65E0\u6743\u8BBF\u95EE\u8BE5\u7AD9\u70B9\u5185\u5BB9",
+  "Select a site before linking a GA4 property": "\u8BF7\u9009\u62E9\u7AD9\u70B9\u540E\u518D\u7ED1\u5B9A\u5A92\u4F53\u8D44\u6E90",
+  "Enter a form title in at least one language": "\u8BF7\u81F3\u5C11\u586B\u5199\u4E00\u79CD\u8BED\u8A00\u7684\u8868\u5355\u6807\u9898",
+  "Customer and follow-up content are required": "\u8BF7\u5B8C\u6574\u586B\u5199\u5173\u8054\u5BA2\u6237\u4E0E\u8DDF\u8FDB\u5185\u5BB9",
+  "No permission to create forms on this site": "\u65E0\u6743\u5728\u8BE5\u7AD9\u70B9\u521B\u5EFA\u8868\u5355",
+  "No permission to delete forms on this site": "\u65E0\u6743\u5220\u9664\u8BE5\u7AD9\u70B9\u8868\u5355",
+  "No permission to access forms on this site": "\u65E0\u6743\u8BBF\u95EE\u8BE5\u7AD9\u70B9\u8868\u5355",
+  "Unauthorized: agent not found or inactive": "\u672A\u6388\u6743\uFF1A\u5750\u5E2D\u4E0D\u5B58\u5728\u6216\u5DF2\u5931\u6548",
+  "Too many requests. Please try again later": "\u8BF7\u6C42\u8FC7\u4E8E\u9891\u7E41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5",
+  "Too many attempts. Please try again later": "\u5C1D\u8BD5\u8FC7\u4E8E\u9891\u7E41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5",
+  "Select a GA4 property for this site first": "\u8BF7\u5148\u4E3A\u672C\u7AD9\u9009\u62E9 GA4 \u5A92\u4F53\u8D44\u6E90",
+  "No permission to view stats for this site": "\u65E0\u6743\u67E5\u770B\u8BE5\u7AD9\u70B9\u7EDF\u8BA1",
+  "Unauthorized: invalid or missing API key": "\u672A\u7ECF\u6388\u6743: API Key \u65E0\u6548\u6216\u672A\u63D0\u4F9B",
+  "Too many uploads. Please try again later": "\u4E0A\u4F20\u8FC7\u4E8E\u9891\u7E41\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5",
+  "No permission to edit forms on this site": "\u65E0\u6743\u4FEE\u6539\u8BE5\u7AD9\u70B9\u8868\u5355",
+  "This domain is not registered to a site": "\u5F53\u524D\u57DF\u540D\u672A\u767B\u8BB0\u7AD9\u70B9",
+  "Select a site before viewing GA reports": "\u8BF7\u9009\u62E9\u7AD9\u70B9\u540E\u518D\u67E5\u770B GA \u62A5\u544A",
+  "Save Google Client ID and secret first": "\u8BF7\u5148\u586B\u5199\u5E76\u4FDD\u5B58 Google \u5BA2\u6237\u7AEF ID/\u5BC6\u94A5",
+  "Username and display name are required": "\u8BF7\u5B8C\u6574\u586B\u5199\u7528\u6237\u540D\u548C\u59D3\u540D",
+  "Unable to access microphone or camera": "\u65E0\u6CD5\u83B7\u53D6\u9EA6\u514B\u98CE\u6216\u6444\u50CF\u5934\u6743\u9650",
+  "Contact info and message are required": "\u8BF7\u5B8C\u6574\u586B\u5199\u8054\u7CFB\u65B9\u5F0F\u4E0E\u7559\u8A00\u5185\u5BB9",
+  "Missing required translate parameters": "\u7F3A\u5C11\u7FFB\u8BD1\u5FC5\u8981\u53C2\u6570",
+  "Cannot delete the default super admin": "\u9ED8\u8BA4\u8D85\u7EA7\u7BA1\u7406\u5458\u4E0D\u53EF\u5220\u9664",
+  "Required field missing: ${field.key}": "\u8BF7\u586B\u5199\u5FC5\u586B\u9879\uFF1A${field.key}",
+  "No microphone or camera device found": "\u672A\u68C0\u6D4B\u5230\u53EF\u7528\u7684\u9EA6\u514B\u98CE\u6216\u6444\u50CF\u5934\u8BBE\u5907",
+  "Document title and body are required": "\u6587\u6863\u6807\u9898\u4E0E\u5185\u5BB9\u5747\u4E3A\u5FC5\u586B\u9879",
+  "Unauthorized: conversation mismatch": "\u672A\u6388\u6743\uFF1A\u4F1A\u8BDD\u4E0D\u5339\u914D",
+  "Select a site (site_id / X-Site-Id)": "\u8BF7\u9009\u62E9\u7AD9\u70B9\uFF08site_id / X-Site-Id\uFF09",
+  "GA reporting disabled for this site": "\u5DF2\u5173\u95ED\u672C\u7AD9 GA \u62A5\u544A\u67E5\u770B",
+  "Category slug and name are required": "\u5206\u7C7B\u6807\u8BC6 (slug) \u4E0E\u5206\u7C7B\u540D\u79F0\u4E3A\u5FC5\u586B\u9879",
+  "Complete agent details are required": "\u8BF7\u5B8C\u6574\u586B\u5199\u5458\u5DE5\u4FE1\u606F",
+  "Language code and name are required": "\u8BF7\u5B8C\u6574\u586B\u5199\u8BED\u8A00\u4EE3\u7801\u548C\u540D\u79F0",
+  "Channel configuration is incomplete": "\u901A\u9053\u914D\u7F6E\u4E0D\u5B8C\u6574",
+  "Failed to save knowledge document:": "\u4FDD\u5B58\u77E5\u8BC6\u5E93\u6587\u6863\u5931\u8D25:",
+  "Form not found or not on this site": "\u8868\u5355\u4E0D\u5B58\u5728\u6216\u4E0D\u5C5E\u4E8E\u5F53\u524D\u7AD9\u70B9",
+  "Cannot delete the default language": "\u9ED8\u8BA4\u515C\u5E95\u8BED\u79CD\u4E0D\u53EF\u5220\u9664",
+  "Hello! How can we help you today?": "\u60A8\u597D\uFF01\u5F88\u9AD8\u5174\u4E3A\u60A8\u670D\u52A1\uFF0C\u8BF7\u95EE\u6709\u4EC0\u4E48\u53EF\u4EE5\u534F\u52A9\u60A8\u7684\uFF1F",
+  "Security code verification failed": "\u540E\u53F0\u5B89\u5168\u7801\u9A8C\u8BC1\u5931\u8D25\uFF0C\u8BF7\u786E\u8BA4\u5B89\u5168\u7801\u6B63\u786E",
+  "Workers AI binding is not enabled": "Workers AI \u8FB9\u7F18\u6A21\u578B\u7ED1\u5B9A\u672A\u5F00\u542F",
+  "No permission to access this site": "\u65E0\u6743\u8BBF\u95EE\u8BE5\u7AD9\u70B9",
+  "No permission to manage this site": "\u65E0\u6743\u64CD\u4F5C\u8BE5\u7AD9\u70B9",
+  "Form does not belong to this site": "\u8868\u5355\u4E0D\u5C5E\u4E8E\u5F53\u524D\u7AD9\u70B9",
+  "Private chat not found or deleted": "\u79C1\u5BC6\u804A\u5929\u4E0D\u5B58\u5728\u6216\u5DF2\u88AB\u5220\u9664",
+  "Private chat feature is disabled": "\u4E13\u5C5E\u529F\u80FD\u672A\u5F00\u542F",
+  "Model did not return valid JSON": "\u6A21\u578B\u672A\u8FD4\u56DE\u5408\u6CD5 JSON",
+  "Failed to load product details:": "\u83B7\u53D6\u4EA7\u54C1\u8BE6\u60C5\u5931\u8D25:",
+  "Failed to load article details:": "\u83B7\u53D6\u6587\u7AE0\u8BE6\u60C5\u5931\u8D25:",
+  "Cannot delete the default group": "\u9ED8\u8BA4\u5206\u7EC4\u4E0D\u53EF\u5220\u9664",
+  "Failed to load knowledge base:": "\u83B7\u53D6\u77E5\u8BC6\u5E93\u5217\u8868\u5931\u8D25:",
+  "Debug question cannot be empty": "\u8C03\u8BD5\u63D0\u95EE\u4E0D\u80FD\u4E3A\u7A7A",
+  "translations_json is required": "\u8BF7\u63D0\u4F9B\u591A\u8BED\u8A00\u6587\u6848 translations_json",
+  "Customer name cannot be empty": "\u5BA2\u6237\u59D3\u540D\u4E0D\u80FD\u4E3A\u7A7A",
+  "This private chat has expired": "\u8BE5\u79C1\u5BC6\u804A\u5929\u5DF2\u8FC7\u671F\u5931\u6548",
+  "Current password is incorrect": "\u539F\u5BC6\u7801\u9519\u8BEF",
+  "Unauthorized: please sign in": "\u672A\u6388\u6743\uFF1A\u8BF7\u5148\u767B\u5F55",
+  "Google account not connected": "\u5C1A\u672A\u8FDE\u63A5 Google \u8D26\u53F7",
+  "Model returned empty content": "\u6A21\u578B\u8FD4\u56DE\u7A7A\u5185\u5BB9",
+  "Failed to load product data:": "\u83B7\u53D6\u4EA7\u54C1\u6570\u636E\u5931\u8D25:",
+  "Search query cannot be empty": "\u641C\u7D22\u5173\u952E\u8BCD\u4E0D\u80FD\u4E3A\u7A7A",
+  "Register at least one domain": "\u81F3\u5C11\u767B\u8BB0\u4E00\u4E2A\u57DF\u540D",
+  "Document and vectors removed": "\u6587\u6863\u4E0E\u5411\u91CF\u5DF2\u6E05\u9664",
+  "Invalid username or password": "\u7528\u6237\u540D\u6216\u5BC6\u7801\u9519\u8BEF",
+  "Forbidden: super admin only": "\u6743\u9650\u4E0D\u8DB3\uFF1A\u4EC5\u8D85\u7EA7\u7BA1\u7406\u5458\u53EF\u64CD\u4F5C",
+  "Failed to save AI settings:": "\u4FDD\u5B58 AI \u914D\u7F6E\u5931\u8D25:",
+  "Failed to load AI settings:": "\u83B7\u53D6 AI \u914D\u7F6E\u5931\u8D25:",
+  "Enter username and password": "\u8BF7\u8F93\u5165\u7528\u6237\u540D\u548C\u5BC6\u7801",
+  "Failed to load categories:": "\u83B7\u53D6\u5206\u7C7B\u5931\u8D25:",
+  "Failed to create category:": "\u521B\u5EFA\u5206\u7C7B\u5931\u8D25:",
+  "Failed to update category:": "\u66F4\u65B0\u5206\u7C7B\u5931\u8D25:",
+  "Failed to delete category:": "\u5220\u9664\u5206\u7C7B\u5931\u8D25:",
+  "Failed to delete document:": "\u5220\u9664\u6587\u6863\u5931\u8D25:",
+  "Group name cannot be empty": "\u5206\u7EC4\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A",
+  "Invalid submission payload": "\u63D0\u4EA4\u6570\u636E\u683C\u5F0F\u9519\u8BEF",
+  "Form not found or disabled": "\u8BE5\u8868\u5355\u4E0D\u5B58\u5728\u6216\u5DF2\u505C\u7528",
+  "Customer profile not found": "\u672A\u627E\u5230\u8BE5\u5BA2\u6237\u6863\u6848",
+  "AI agent settings updated": "AI \u5BA2\u670D\u914D\u7F6E\u5DF2\u66F4\u65B0\u5E76\u5B9E\u65F6\u751F\u6548",
+  "Failed to load documents:": "\u83B7\u53D6\u6587\u6863\u5931\u8D25:",
+  "Failed to create product:": "\u521B\u5EFA\u4EA7\u54C1\u5931\u8D25:",
+  "Failed to create article:": "\u521B\u5EFA\u6587\u7AE0\u5931\u8D25:",
+  "Failed to update product:": "\u66F4\u65B0\u4EA7\u54C1\u5931\u8D25:",
+  "Failed to update article:": "\u66F4\u65B0\u6587\u7AE0\u5931\u8D25:",
+  "Failed to delete product:": "\u5220\u9664\u4EA7\u54C1\u5931\u8D25:",
+  "Failed to delete article:": "\u5220\u9664\u6587\u7AE0\u5931\u8D25:",
+  "File too large (max 15MB)": "\u6587\u4EF6\u8FC7\u5927\uFF08\u4E0A\u9650 15MB\uFF09",
+  "Enter the access password": "\u8BF7\u8F93\u5165\u4E13\u5C5E\u8BBF\u95EE\u5BC6\u7801",
+  "Site name cannot be empty": "\u7AD9\u70B9\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A",
+  "Incorrect access password": "\u79C1\u5BC6\u8BBF\u95EE\u5BC6\u7801\u9519\u8BEF",
+  "Username is already taken": "\u7528\u6237\u540D\u5DF2\u88AB\u5360\u7528\uFF0C\u8BF7\u66F4\u6362",
+  "Failed to load products:": "\u83B7\u53D6\u4EA7\u54C1\u5217\u8868\u5931\u8D25:",
+  "Failed to load articles:": "\u83B7\u53D6\u6587\u7AE0\u5217\u8868\u5931\u8D25:",
+  "Product slug is required": "\u4EA7\u54C1\u6807\u8BC6 (slug) \u4E3A\u5FC5\u586B\u9879",
+  "Article slug is required": "\u6587\u7AE0\u6807\u8BC6 (slug) \u4E3A\u5FC5\u586B\u9879",
+  "Key name cannot be empty": "\u8BCD\u6761\u952E\u540D\u4E0D\u80FD\u4E3A\u7A7A",
+  "Question cannot be empty": "\u95EE\u9898\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A",
+  "Select a site (site_id)": "\u8BF7\u9009\u62E9\u7AD9\u70B9\uFF08site_id\uFF09",
+  "Conversation not found": "\u4F1A\u8BDD\u4E0D\u5B58\u5728",
+  "Select a GA4 property": "\u8BF7\u9009\u62E9 GA4 \u5A92\u4F53\u8D44\u6E90",
+  "Incomplete parameters": "\u53C2\u6570\u4E0D\u5B8C\u6574",
+  "Translation is empty": "\u8BD1\u6587\u4E3A\u7A7A",
+  "Knowledge Q&A error:": "\u77E5\u8BC6\u5E93\u95EE\u7B54\u5F02\u5E38:",
+  "No upload file found": "\u672A\u627E\u5230\u4E0A\u4F20\u6587\u4EF6",
+  "Form key is required": "\u8868\u5355\u8C03\u7528 Key \u4E3A\u5FC5\u586B\u9879",
+  "AI translate error:": "AI \u7FFB\u8BD1\u5F02\u5E38:",
+  "Debug query failed:": "\u8C03\u8BD5\u67E5\u8BE2\u5931\u8D25:",
+  "site_id is required": "site_id \u4E3A\u5FC5\u586B\u9879",
+  "Invalid report type": "\u65E0\u6548\u7684\u62A5\u544A\u7C7B\u578B",
+  "Missing visitor id": "\u7F3A\u5C11\u8BBF\u5BA2\u552F\u4E00\u6807\u8BC6",
+  "Missing parameters": "\u7F3A\u5C11\u53C2\u6570",
+  "Document not found": "\u6587\u6863\u4E0D\u5B58\u5728",
+  "Language not found": "\u8BED\u79CD\u4E0D\u5B58\u5728",
+  "Customer not found": "\u672A\u627E\u5230\u8BE5\u5BA2\u6237",
+  "Re-index succeeded": "\u91CD\u65B0\u7D22\u5F15\u6210\u529F",
+  "Retrieval failed:": "\u68C0\u7D22\u5931\u8D25:",
+  "Product not found": "\u4EA7\u54C1\u4E0D\u5B58\u5728",
+  "Article not found": "\u6587\u7AE0\u4E0D\u5B58\u5728",
+  "Account not found": "\u8D26\u53F7\u4E0D\u5B58\u5728",
+  "CMS sync failed:": "\u4ECE CMS \u540C\u6B65\u5931\u8D25:",
+  "Re-index failed:": "\u91CD\u65B0\u7D22\u5F15\u5931\u8D25:",
+  "Specify a group": "\u8BF7\u6307\u5B9A\u5206\u7EC4",
+  "Agent not found": "\u5BA2\u670D\u4E0D\u5B58\u5728",
+  "Upload failed:": "\u4E0A\u4F20\u5931\u8D25:",
+  "Form not found": "\u8868\u5355\u4E0D\u5B58\u5728",
+  "Site not found": "\u7AD9\u70B9\u4E0D\u5B58\u5728",
+  "Document saved": "\u6587\u6863\u4FDD\u5B58\u6210\u529F",
+  "Missing site": "\u7F3A\u5C11\u7AD9\u70B9",
+  "Test error:": "\u6D4B\u8BD5\u5F02\u5E38:"
+};
+
+// src/worker/i18n/apiT.ts
+var CATALOGS = {
+  "zh-CN": apiMessagesZhCN,
+  // Traditional Chinese: reuse Simplified for API errors until a dedicated catalog exists
+  "zh-TW": apiMessagesZhCN
+};
+var MSG_KEYS = /* @__PURE__ */ new Set(["msg", "message", "error", "error_message", "detail"]);
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+__name(escapeRegExp, "escapeRegExp");
+function matchTemplate(enTemplate, text, zhTemplate) {
+  if (!enTemplate.includes("${"))
+    return null;
+  const tokenRe = /\$\{([^}]+)\}/g;
+  const names = [];
+  let pattern = "";
+  let last = 0;
+  let m;
+  while (m = tokenRe.exec(enTemplate)) {
+    pattern += escapeRegExp(enTemplate.slice(last, m.index));
+    pattern += "(.+?)";
+    names.push(m[1]);
+    last = m.index + m[0].length;
+  }
+  pattern += escapeRegExp(enTemplate.slice(last));
+  const re = new RegExp(`^${pattern}$`);
+  const hit = text.match(re);
+  if (!hit)
+    return null;
+  let out = zhTemplate;
+  names.forEach((name, i) => {
+    out = out.split(`\${${name}}`).join(hit[i + 1] ?? "");
+  });
+  return out;
+}
+__name(matchTemplate, "matchTemplate");
+function apiT(locale, text) {
+  if (!text || locale === "en")
+    return text;
+  const catalog = CATALOGS[locale];
+  if (!catalog)
+    return text;
+  const exact = catalog[text];
+  if (exact)
+    return exact;
+  for (const [en, zh] of Object.entries(catalog)) {
+    const templated = matchTemplate(en, text, zh);
+    if (templated != null)
+      return templated;
+  }
+  let bestKey = "";
+  let bestVal = "";
+  for (const [en, zh] of Object.entries(catalog)) {
+    if (en.endsWith(":") && text.startsWith(en) && en.length > bestKey.length) {
+      bestKey = en;
+      bestVal = zh;
+    }
+  }
+  if (bestKey)
+    return bestVal + text.slice(bestKey.length);
+  return text;
+}
+__name(apiT, "apiT");
+function translateValue(locale, value) {
+  if (typeof value === "string")
+    return apiT(locale, value);
+  if (Array.isArray(value))
+    return value.map((v) => translateValue(locale, v));
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = MSG_KEYS.has(k) ? translateValue(locale, v) : v;
+    }
+    return out;
+  }
+  return value;
+}
+__name(translateValue, "translateValue");
+function translateApiJsonBody(locale, body) {
+  if (locale === "en" || body == null)
+    return body;
+  return translateValue(locale, body);
+}
+__name(translateApiJsonBody, "translateApiJsonBody");
+
+// src/worker/i18n/apiLocaleMiddleware.ts
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+init_performance2();
+
+// src/worker/i18n/resolveApiLocale.ts
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+init_performance2();
+var SUPPORTED = /* @__PURE__ */ new Set(["en", "zh-CN", "zh-TW", "ja", "es", "pt", "ar"]);
+function normalizeApiLocale(raw2) {
+  if (!raw2)
+    return "en";
+  const s = raw2.trim().replace(/_/g, "-");
+  if (SUPPORTED.has(s))
+    return s;
+  const lower = s.toLowerCase();
+  if (lower.startsWith("zh-tw") || lower === "zh-hk" || lower === "zh-hant")
+    return "zh-TW";
+  if (lower.startsWith("zh"))
+    return "zh-CN";
+  if (lower.startsWith("ja"))
+    return "ja";
+  if (lower.startsWith("es"))
+    return "es";
+  if (lower.startsWith("pt"))
+    return "pt";
+  if (lower.startsWith("ar"))
+    return "ar";
+  if (lower.startsWith("en"))
+    return "en";
+  return "en";
+}
+__name(normalizeApiLocale, "normalizeApiLocale");
+function resolveApiLocaleFromHeaders(getHeader) {
+  const explicit = getHeader("X-UI-Locale") || getHeader("x-ui-locale");
+  if (explicit)
+    return normalizeApiLocale(explicit);
+  const accept = getHeader("Accept-Language") || getHeader("accept-language");
+  if (!accept)
+    return "en";
+  const first = accept.split(",")[0]?.trim().split(";")[0];
+  return normalizeApiLocale(first);
+}
+__name(resolveApiLocaleFromHeaders, "resolveApiLocaleFromHeaders");
+
+// src/worker/i18n/apiLocaleMiddleware.ts
+var apiLocaleMiddleware = /* @__PURE__ */ __name(async (c, next) => {
+  await next();
+  const contentType = c.res.headers.get("Content-Type") || "";
+  if (!contentType.includes("application/json"))
+    return;
+  const locale = resolveApiLocaleFromHeaders((name) => c.req.header(name));
+  if (locale === "en")
+    return;
+  try {
+    const cloned = c.res.clone();
+    const body = await cloned.json();
+    const translated = translateApiJsonBody(locale, body);
+    c.res = new Response(JSON.stringify(translated), {
+      status: c.res.status,
+      statusText: c.res.statusText,
+      headers: c.res.headers
+    });
+  } catch {
+  }
+}, "apiLocaleMiddleware");
 
 // src/worker/durableObject.ts
 init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
@@ -10856,7 +11175,7 @@ var ChatCoordinator = class {
                     conversation_id: savedMsg.conversation_id,
                     sender_type: "agent",
                     sender_id: "ai_bot",
-                    sender_name: "AI \u667A\u80FD\u5BA2\u670D",
+                    sender_name: "AI Assistant",
                     message_type: "text",
                     content: answer,
                     status: "sent",
@@ -10988,6 +11307,7 @@ app.use("*", cors({
     "Authorization",
     "X-Requested-With",
     "X-Site-Id",
+    "X-UI-Locale",
     "x-session-token",
     "x-visitor-id",
     "x-visitor-token",
@@ -10995,6 +11315,7 @@ app.use("*", cors({
     "x-api-key"
   ]
 }));
+app.use("/api/*", apiLocaleMiddleware);
 app.route("/api/auth", authRouter);
 app.route("/api", chatRouter);
 app.route("/api/admin", adminRouter);
