@@ -1362,6 +1362,12 @@ var init_langSettings = __esm({
 });
 
 // src/worker/db/settings.ts
+var settings_exports = {};
+__export(settings_exports, {
+  getSystemSetting: () => getSystemSetting,
+  getSystemSettings: () => getSystemSettings,
+  updateSystemSettings: () => updateSystemSettings
+});
 async function getSystemSettings(db) {
   const res = await db.prepare("SELECT key, value FROM settings").all();
   const result = {
@@ -1804,7 +1810,11 @@ var init_sites = __esm({
       "ga_enabled",
       "ga_measurement_id",
       "ga_property_id",
-      "ga_report_enabled"
+      "ga_report_enabled",
+      "ai_reply_strategy",
+      "ai_system_prompt",
+      "ai_model_pool",
+      "ai_ticket_auto_reply"
     ];
     SITE_SETTING_KEY_SET = new Set(SITE_SETTING_KEYS);
     __name(isSiteSettingKey, "isSiteSettingKey");
@@ -2488,6 +2498,7 @@ async function ensureKbTables(db) {
     await db.prepare(`
       CREATE TABLE IF NOT EXISTS kb_documents (
         id TEXT PRIMARY KEY,
+        site_id TEXT,
         domain TEXT NOT NULL DEFAULT 'support',
         title TEXT NOT NULL,
         content TEXT NOT NULL,
@@ -2508,14 +2519,25 @@ async function ensureKbTables(db) {
         chunk_index INTEGER NOT NULL,
         content TEXT NOT NULL,
         vector_id TEXT NOT NULL,
+        site_id TEXT,
         created_at INTEGER NOT NULL
       )
     `).run();
     try {
+      await db.prepare("ALTER TABLE kb_documents ADD COLUMN site_id TEXT").run();
+    } catch {
+    }
+    try {
+      await db.prepare("ALTER TABLE kb_chunks ADD COLUMN site_id TEXT").run();
+    } catch {
+    }
+    try {
       await db.prepare("CREATE INDEX IF NOT EXISTS idx_kb_documents_domain ON kb_documents(domain)").run();
       await db.prepare("CREATE INDEX IF NOT EXISTS idx_kb_documents_product ON kb_documents(rel_product_id)").run();
+      await db.prepare("CREATE INDEX IF NOT EXISTS idx_kb_documents_site ON kb_documents(site_id)").run();
       await db.prepare("CREATE INDEX IF NOT EXISTS idx_kb_chunks_document ON kb_chunks(document_id)").run();
       await db.prepare("CREATE INDEX IF NOT EXISTS idx_kb_chunks_vector ON kb_chunks(vector_id)").run();
+      await db.prepare("CREATE INDEX IF NOT EXISTS idx_kb_chunks_site ON kb_chunks(site_id)").run();
     } catch (e) {
     }
   } catch (err) {
@@ -2526,6 +2548,10 @@ async function getKbDocuments(db, filter) {
   await ensureKbTables(db);
   let sql = "SELECT * FROM kb_documents WHERE 1=1";
   const params = [];
+  if (filter?.siteId) {
+    sql += " AND site_id = ?";
+    params.push(filter.siteId);
+  }
   if (filter?.domain) {
     sql += " AND domain = ?";
     params.push(filter.domain);
@@ -2556,9 +2582,10 @@ async function saveKbDocument(db, doc) {
   await ensureKbTables(db);
   const sql = `
     INSERT INTO kb_documents (
-      id, domain, title, content, rel_product_id, tags_json, chunks_count, status, error_message, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, site_id, domain, title, content, rel_product_id, tags_json, chunks_count, status, error_message, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
+      site_id = excluded.site_id,
       domain = excluded.domain,
       title = excluded.title,
       content = excluded.content,
@@ -2571,6 +2598,7 @@ async function saveKbDocument(db, doc) {
   `;
   await db.prepare(sql).bind(
     doc.id,
+    doc.site_id || null,
     doc.domain,
     doc.title,
     doc.content,
@@ -2592,8 +2620,8 @@ async function saveKbChunks(db, chunks) {
     const batch = chunks.slice(i, i + batchSize);
     const statements = batch.map(
       (chunk) => db.prepare(`
-        INSERT INTO kb_chunks (id, document_id, domain, chunk_index, content, vector_id, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO kb_chunks (id, document_id, domain, chunk_index, content, vector_id, site_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         chunk.id,
         chunk.document_id,
@@ -2601,6 +2629,7 @@ async function saveKbChunks(db, chunks) {
         chunk.chunk_index,
         chunk.content,
         chunk.vector_id,
+        chunk.site_id || null,
         chunk.created_at
       )
     );
@@ -2676,6 +2705,19 @@ __export(kbService_exports, {
   testAiChannel: () => testAiChannel,
   translateContentWithAi: () => translateContentWithAi
 });
+async function getAiConfigValue(env2, key, siteId) {
+  const sid = (siteId || "").trim();
+  if (sid) {
+    try {
+      const siteMap = await getSiteSettingsMap(env2.DB, sid);
+      const v = siteMap[key];
+      if (v != null && String(v).trim() !== "")
+        return String(v);
+    } catch {
+    }
+  }
+  return getSystemSetting(env2.DB, key);
+}
 function resolveCfModelId(model) {
   const raw2 = (model || "").trim();
   if (!raw2)
@@ -2754,6 +2796,7 @@ async function indexDocument(env2, doc) {
         chunk_index: idx,
         content: chunkText,
         vector_id: `vec_${chunkId}`,
+        site_id: doc.site_id || null,
         created_at: Date.now()
       };
     });
@@ -2769,7 +2812,8 @@ async function indexDocument(env2, doc) {
             document_id: doc.id,
             domain: doc.domain,
             rel_product_id: doc.rel_product_id || "",
-            title: doc.title
+            title: doc.title,
+            site_id: doc.site_id || ""
           }
         }));
         await env2.VECTORIZE_INDEX.upsert(vectorizeRecords);
@@ -2789,25 +2833,39 @@ async function indexDocument(env2, doc) {
 async function searchKnowledge(env2, query, options) {
   const topK = options?.topK || 4;
   const minScore = options?.minScore || 0.45;
+  const siteId = (options?.siteId || "").trim();
   if (!env2.AI || !env2.VECTORIZE_INDEX) {
-    const docs = await getKbDocuments(env2.DB, {
-      domain: options?.domains?.[0],
-      relProductId: options?.relProductId,
-      search: query
-    });
-    return docs.slice(0, topK).map((d) => ({
-      chunk: {
-        id: "fallback_" + d.id,
-        document_id: d.id,
-        domain: d.domain,
-        chunk_index: 0,
-        content: d.content.substring(0, 400),
-        vector_id: "",
-        created_at: d.created_at
-      },
-      score: 0.8,
-      title: d.title
-    }));
+    const collected = [];
+    const domains = options?.domains && options.domains.length > 0 ? options.domains : [void 0];
+    for (const domain2 of domains) {
+      const docs = await getKbDocuments(env2.DB, {
+        domain: domain2,
+        relProductId: options?.relProductId,
+        siteId: siteId || void 0,
+        search: query
+      });
+      for (const d of docs) {
+        collected.push({
+          chunk: {
+            id: "fallback_" + d.id,
+            document_id: d.id,
+            domain: d.domain,
+            chunk_index: 0,
+            content: d.content.substring(0, 400),
+            vector_id: "",
+            created_at: d.created_at,
+            site_id: d.site_id || null
+          },
+          score: 0.8,
+          title: d.title
+        });
+        if (collected.length >= topK)
+          break;
+      }
+      if (collected.length >= topK)
+        break;
+    }
+    return collected.slice(0, topK);
   }
   const embedRes = await env2.AI.run(EMBEDDING_MODEL, { text: [query] });
   const queryVectors = embedRes.data || embedRes;
@@ -2820,6 +2878,9 @@ async function searchKnowledge(env2, query, options) {
   }
   if (options?.relProductId) {
     filter.rel_product_id = options.relProductId;
+  }
+  if (siteId) {
+    filter.site_id = siteId;
   }
   const queryParams = { topK: topK * 2 };
   if (Object.keys(filter).length > 0) {
@@ -2846,29 +2907,34 @@ async function searchKnowledge(env2, query, options) {
   }).filter(Boolean);
 }
 function normalizeLlmText(raw2, depth = 0) {
-  if (raw2 == null || depth > 6)
+  if (raw2 == null || depth > 8)
     return "";
   if (typeof raw2 === "string")
     return raw2;
   if (typeof raw2 === "number" || typeof raw2 === "boolean")
     return String(raw2);
-  if (typeof raw2?.trim === "function" && typeof raw2 !== "object") {
-    try {
-      return String(raw2);
-    } catch {
-      return "";
-    }
-  }
   if (Array.isArray(raw2)) {
-    return raw2.map((part) => normalizeLlmText(part, depth + 1)).filter(Boolean).join("");
+    return raw2.map((part) => {
+      if (part && typeof part === "object" && "type" in part && "text" in part) {
+        return normalizeLlmText(part.text, depth + 1);
+      }
+      return normalizeLlmText(part, depth + 1);
+    }).filter(Boolean).join("");
   }
   if (typeof raw2 === "object") {
     const o = raw2;
+    const choiceContent = o.choices?.[0]?.message?.content;
+    if (choiceContent != null) {
+      const t = normalizeLlmText(choiceContent, depth + 1);
+      if (t)
+        return t;
+    }
     for (const key of [
       "response",
       "text",
       "content",
       "output",
+      "output_text",
       "generated_text",
       "result",
       "message",
@@ -2887,28 +2953,93 @@ function asTrimmedText(raw2) {
   const text = normalizeLlmText(raw2);
   return typeof text === "string" ? text.trim() : "";
 }
+function previewAiRaw(res) {
+  try {
+    if (res == null)
+      return "null";
+    if (typeof res === "string")
+      return res.slice(0, 240);
+    if (typeof res?.getReader === "function")
+      return "[ReadableStream]";
+    const keys = typeof res === "object" ? Object.keys(res).slice(0, 12).join(",") : typeof res;
+    const json = JSON.stringify(res);
+    return `keys=${keys}; ${json.slice(0, 280)}`;
+  } catch {
+    return Object.prototype.toString.call(res);
+  }
+}
+async function materializeAiResult(res) {
+  if (res == null)
+    return "";
+  if (typeof res?.getReader === "function") {
+    const reader = res.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done)
+        break;
+      buf += decoder.decode(value, { stream: true });
+    }
+    const pieces = [];
+    for (const line of buf.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed === "data: [DONE]")
+        continue;
+      const payload = trimmed.startsWith("data:") ? trimmed.slice(5).trim() : trimmed;
+      try {
+        const obj = JSON.parse(payload);
+        const t = asTrimmedText(obj);
+        if (t)
+          pieces.push(t);
+      } catch {
+      }
+    }
+    if (pieces.length)
+      return pieces.join("");
+    try {
+      return JSON.parse(buf);
+    } catch {
+      return buf;
+    }
+  }
+  return res;
+}
 function extractWorkersAiRaw(res) {
   if (res == null)
     return "";
-  return res?.response ?? res?.text ?? res?.result?.response ?? res?.result?.text ?? res;
+  if (typeof res === "string")
+    return res;
+  return res?.response ?? res?.text ?? res?.result?.response ?? res?.result?.text ?? res?.choices?.[0]?.message?.content ?? res;
 }
 async function runCfModelOnce(env2, modelName, messages, maxTokens, temperature) {
-  const res = await env2.AI.run(modelName, {
+  const cappedTokens = Math.min(Math.max(maxTokens || 512, 256), 4096);
+  const resRaw = await env2.AI.run(modelName, {
     messages,
-    max_tokens: maxTokens,
+    max_tokens: cappedTokens,
     temperature
   });
-  return asTrimmedText(extractWorkersAiRaw(res));
+  const res = await materializeAiResult(resRaw);
+  const text = asTrimmedText(extractWorkersAiRaw(res));
+  if (text)
+    return text;
+  const again = asTrimmedText(res);
+  if (again)
+    return again;
+  const errHint = res?.error?.message || res?.errors?.[0]?.message || (Array.isArray(res?.tool_calls) && res.tool_calls.length ? "model returned tool_calls without text" : "");
+  throw new Error(
+    `${modelName} returned empty content${errHint ? ` (${errHint})` : ""}; raw=${previewAiRaw(res)}`
+  );
 }
 async function callCfWorkersAi(env2, channel2, messages) {
   if (!env2.AI)
     throw new Error("Workers AI binding is not enabled");
   const primary = resolveCfModelId(channel2.model);
-  const maxTokens = Math.max(channel2.max_tokens || 0, 1536);
+  const maxTokens = Math.max(channel2.max_tokens || 0, 1024);
   const temperature = channel2.temperature ?? 0.3;
   const tried = /* @__PURE__ */ new Set();
   const candidates = [primary, ...CF_AI_FALLBACK_MODELS.filter((m) => m !== primary), CF_ULTIMATE_MODEL];
-  let lastErr = null;
+  const errors = [];
   for (const modelName of candidates) {
     if (tried.has(modelName))
       continue;
@@ -2917,15 +3048,16 @@ async function callCfWorkersAi(env2, channel2, messages) {
       const text = await runCfModelOnce(env2, modelName, messages, maxTokens, temperature);
       if (text)
         return text;
-      lastErr = new Error(`${modelName} \u8FD4\u56DE\u7A7A\u5185\u5BB9`);
+      errors.push(`${modelName}: empty`);
     } catch (err) {
-      lastErr = err instanceof Error ? err : new Error(String(err?.message || err));
-      const msg = lastErr.message;
-      if (!msg.includes("deprecated") && !msg.includes("No such model") && !msg.includes("not found") && !msg.includes("5028") && modelName === primary) {
+      const msg = err instanceof Error ? err.message : String(err?.message || err);
+      errors.push(msg);
+      if (msg.includes("3036") || msg.includes("10,000 neurons") || msg.includes("daily free allocation") || msg.includes("3023") || msg.includes("Account blocked")) {
+        throw new Error(msg);
       }
     }
   }
-  throw lastErr || new Error("Workers AI \u8FD4\u56DE\u5185\u5BB9\u4E3A\u7A7A");
+  throw new Error(`Workers AI failed for channel [${channel2.name}]: ` + errors.join(" | "));
 }
 async function callOpenAiCompatible(channel2, messages) {
   let endpoint = (channel2.endpoint || "https://api.openai.com/v1").trim().replace(/\/+$/, "");
@@ -3004,30 +3136,32 @@ async function callLlmWithFallback(env2, messages, configuredChannels) {
   }
   throw new Error(`\u5168\u90E8 ${activeChannels.length} \u4E2A AI \u6A21\u578B\u901A\u9053\u5747\u8C03\u7528\u5931\u8D25: ` + errors.join("; "));
 }
-async function askKnowledge(env2, question, conversationHistory = []) {
+async function askKnowledge(env2, question, conversationHistory = [], options) {
+  const siteId = (options?.siteId || "").trim() || null;
   const searchResults = await searchKnowledge(env2, question, {
     domains: ["support", "product"],
+    siteId,
     topK: 3,
-    minScore: 0.5
+    minScore: 0.35
   });
   const contextText = searchResults.map((r, i) => `[\u53C2\u8003\u8D44\u6599 ${i + 1} - ${r.title || "\u4F01\u4E1A\u8D44\u6599"}]:
 ${r.chunk.content}`).join("\n\n");
-  const customPrompt = await getSystemSetting(env2.DB, "ai_system_prompt");
-  const defaultPrompt = `\u4F60\u662F\u4E00\u4F4D\u4E13\u4E1A\u3001\u793C\u8C8C\u3001\u4E25\u8C28\u7684\u4F01\u4E1A\u5B98\u65B9\u667A\u80FD\u5BA2\u670D\u987E\u95EE\u3002
-\u4F60\u7684\u4EFB\u52A1\u662F\u6839\u636E\u63D0\u4F9B\u7684\u5B98\u65B9\u4F01\u4E1A\u77E5\u8BC6\u5E93\u53C2\u8003\u8D44\u6599\uFF0C\u7CBE\u51C6\u89E3\u7B54\u5BA2\u6237\u63D0\u51FA\u7684\u95EE\u9898\u3002
+  const customPrompt = await getAiConfigValue(env2, "ai_system_prompt", siteId);
+  const defaultPrompt = `You are a professional, polite company support assistant.
+Answer using ONLY the official knowledge-base excerpts provided below.
 
-\u56DE\u7B54\u89C4\u5219\uFF1A
-1. \u4F18\u5148\u6839\u636E\u7ED9\u51FA\u7684\u53C2\u8003\u8D44\u6599\u771F\u5B9E\u4F5C\u7B54\uFF0C\u4FDD\u6301\u8BED\u6C14\u4EB2\u5207\u3001\u5BA2\u89C2\u3001\u6709\u5E2E\u52A9\u3002
-2. \u5982\u679C\u53C2\u8003\u8D44\u6599\u4E2D\u6CA1\u6709\u63D0\u5230\u76F8\u5173\u4FE1\u606F\uFF0C\u8BF7\u8BDA\u5B9E\u56DE\u7B54\u201C\u5173\u4E8E\u8BE5\u95EE\u9898\u76EE\u524D\u6682\u672A\u67E5\u8BE2\u5230\u786E\u5207\u4FE1\u606F\uFF0C\u6211\u5DF2\u4E3A\u60A8\u8BB0\u5F55\uFF0C\u7A0D\u540E\u53EF\u8F6C\u63A5\u4EBA\u5DE5\u5BA2\u670D\u4E3A\u60A8\u8FDB\u4E00\u6B65\u786E\u8BA4\u201D\uFF0C\u5207\u52FF\u80E1\u4E71\u7F16\u9020\u4EFB\u4F55\u4E8B\u5B9E\u6216\u653F\u7B56\u3002
-3. \u6392\u7248\u6761\u7406\u6E05\u6670\uFF0C\u591A\u4F7F\u7528\u5206\u70B9\u8BF4\u660E\u3002`;
+Rules:
+1. Be helpful and factual; prefer bullet points when listing facts.
+2. If the excerpts do not contain the answer, say clearly that you do not have that information yet and that a human agent can follow up. Do not invent policies, prices, or specs.
+3. Match the visitor's language when possible.`;
   const basePrompt = customPrompt && customPrompt.trim() ? customPrompt.trim() : defaultPrompt;
   const systemPrompt = `${basePrompt}
 
-\u5B98\u65B9\u53C2\u8003\u8D44\u6599\uFF1A
-${contextText || "\uFF08\u6682\u65E0\u76F4\u63A5\u76F8\u5173\u7684\u53C2\u8003\u8D44\u6599\uFF09"}`;
+Official reference excerpts:
+${contextText || "(no closely related excerpts found)"}`;
   let modelPool = DEFAULT_MODEL_POOL;
   try {
-    const poolJson = await getSystemSetting(env2.DB, "ai_model_pool");
+    const poolJson = await getAiConfigValue(env2, "ai_model_pool", siteId);
     if (poolJson) {
       const parsed = JSON.parse(poolJson);
       if (Array.isArray(parsed) && parsed.length > 0) {
@@ -3035,6 +3169,9 @@ ${contextText || "\uFF08\u6682\u65E0\u76F4\u63A5\u76F8\u5173\u7684\u53C2\u8003\u
       }
     }
   } catch (e) {
+  }
+  if (!modelPool.some((c) => c.enabled && c.type === "cf_workers_ai")) {
+    modelPool = [...DEFAULT_MODEL_POOL, ...modelPool];
   }
   const messages = [
     { role: "system", content: systemPrompt },
@@ -3050,12 +3187,13 @@ ${contextText || "\uFF08\u6682\u65E0\u76F4\u63A5\u76F8\u5173\u7684\u53C2\u8003\u
     };
   } catch (err) {
     console.error("All AI channels failed in askKnowledge:", err);
-    const fallbackAnswer = searchResults.length > 0 ? `\u6839\u636E\u4F01\u4E1A\u77E5\u8BC6\u5E93\u4E3A\u60A8\u67E5\u8BE2\u5230\u4EE5\u4E0B\u53C2\u8003\u4FE1\u606F\uFF1A
-${searchResults[0].chunk.content}` : "\u60A8\u597D\uFF01\u4EBA\u5DE5\u5BA2\u670D\u5F53\u524D\u5FD9\uFF0C\u7A0D\u540E\u5C06\u4E3A\u60A8\u56DE\u590D\uFF0C\u8BF7\u968F\u65F6\u7559\u8A00\u3002";
+    const errMsg = String(err?.message || err || "").slice(0, 180);
+    const fallbackAnswer = searchResults.length > 0 ? `Based on the knowledge base:
+${searchResults[0].chunk.content}` : `AI assistant is temporarily unavailable (${errMsg || "model error"}). An agent will follow up shortly.`;
     return {
       answer: fallbackAnswer,
       sources: searchResults.map((r) => ({ title: r.title, score: r.score })),
-      used_channel: "\u672C\u5730\u77E5\u8BC6\u5E93\u964D\u7EA7\u515C\u5E95"
+      used_channel: "fallback"
     };
   }
 }
@@ -3119,13 +3257,16 @@ async function translateContentWithAi(env2, params) {
   }
   let modelPool = DEFAULT_MODEL_POOL;
   try {
-    const poolJson = await getSystemSetting(env2.DB, "ai_model_pool");
+    const poolJson = await getAiConfigValue(env2, "ai_model_pool", null);
     if (poolJson) {
       const parsed = JSON.parse(poolJson);
       if (Array.isArray(parsed) && parsed.length > 0)
         modelPool = normalizeModelPool(parsed);
     }
   } catch (e) {
+  }
+  if (!modelPool.some((c) => c.enabled && c.type === "cf_workers_ai")) {
+    modelPool = [...DEFAULT_MODEL_POOL, ...modelPool];
   }
   modelPool = preferTranslatePool(modelPool).map((ch) => ({
     ...ch,
@@ -3200,29 +3341,33 @@ var init_kbService = __esm({
     init_performance2();
     init_kb();
     init_settings();
+    init_sites();
+    __name(getAiConfigValue, "getAiConfigValue");
     EMBEDDING_MODEL = "@cf/baai/bge-large-zh-v1.5";
     DEPRECATED_MODEL_MAP = {
-      "@cf/meta/llama-3.1-8b-instruct": "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
-      "@cf/meta/llama-3.1-8b-instruct-awq": "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
-      "@cf/meta/infire-llama-3.1-8b-instruct": "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
-      "@cf/meta/llama-3-8b-instruct": "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
-      "@cf/meta/llama-3-8b-instruct-awq": "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
+      "@cf/meta/llama-3.1-8b-instruct": "@cf/meta/llama-3.1-8b-instruct-fp8",
+      "@cf/meta/llama-3.1-8b-instruct-awq": "@cf/meta/llama-3.1-8b-instruct-fp8",
+      "@cf/meta/llama-3.1-8b-instruct-fp8-fast": "@cf/meta/llama-3.1-8b-instruct-fp8",
+      "@cf/meta/infire-llama-3.1-8b-instruct": "@cf/meta/llama-3.1-8b-instruct-fp8",
+      "@cf/meta/llama-3-8b-instruct": "@cf/meta/llama-3.1-8b-instruct-fp8",
+      "@cf/meta/llama-3-8b-instruct-awq": "@cf/meta/llama-3.1-8b-instruct-fp8",
       "@cf/meta/llama-3.1-70b-instruct": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-      "@cf/qwen/qwen1.5-14b-chat": "@cf/qwen/qwen2.5-72b-instruct"
+      "@cf/qwen/qwen1.5-14b-chat": "@cf/qwen/qwen3-30b-a3b-fp8",
+      "@cf/qwen/qwen2.5-72b-instruct": "@cf/qwen/qwen3-30b-a3b-fp8"
     };
     CF_AI_FALLBACK_MODELS = [
       "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-      "@cf/qwen/qwen2.5-72b-instruct",
-      "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
+      "@cf/qwen/qwen3-30b-a3b-fp8",
+      "@cf/meta/llama-3.1-8b-instruct-fp8",
       "@cf/meta/llama-3.2-3b-instruct"
     ];
-    CF_ULTIMATE_MODEL = "@cf/meta/llama-3.1-8b-instruct-fp8-fast";
+    CF_ULTIMATE_MODEL = "@cf/meta/llama-3.1-8b-instruct-fp8";
     __name(resolveCfModelId, "resolveCfModelId");
     __name(normalizeModelPool, "normalizeModelPool");
     DEFAULT_MODEL_POOL = [
       {
         id: "default_cf_llama33",
-        name: "Cloudflare Llama-3.3-70B (\u5B98\u65B9\u514D\u8D39\u65D7\u8230)",
+        name: "Cloudflare Llama-3.3-70B",
         type: "cf_workers_ai",
         model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
         enabled: true,
@@ -3230,26 +3375,26 @@ var init_kbService = __esm({
         temperature: 0.3
       },
       {
-        id: "default_cf_qwen72",
-        name: "Cloudflare Qwen2.5-72B",
+        id: "default_cf_qwen3",
+        name: "Cloudflare Qwen3-30B",
         type: "cf_workers_ai",
-        model: "@cf/qwen/qwen2.5-72b-instruct",
+        model: "@cf/qwen/qwen3-30b-a3b-fp8",
         enabled: true,
         max_tokens: 2048,
         temperature: 0.3
       },
       {
         id: "default_cf_llama31",
-        name: "Cloudflare Llama-3.1-8B (fp8-fast)",
+        name: "Cloudflare Llama-3.1-8B",
         type: "cf_workers_ai",
-        model: "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
+        model: "@cf/meta/llama-3.1-8b-instruct-fp8",
         enabled: true,
         max_tokens: 1536,
         temperature: 0.2
       },
       {
         id: "default_cf_llama32",
-        name: "Cloudflare Llama-3.2-3B (\u5B98\u65B9\u514D\u8D39\u6781\u901F)",
+        name: "Cloudflare Llama-3.2-3B",
         type: "cf_workers_ai",
         model: "@cf/meta/llama-3.2-3b-instruct",
         enabled: true,
@@ -3269,6 +3414,8 @@ var init_kbService = __esm({
     __name(searchKnowledge, "searchKnowledge");
     __name(normalizeLlmText, "normalizeLlmText");
     __name(asTrimmedText, "asTrimmedText");
+    __name(previewAiRaw, "previewAiRaw");
+    __name(materializeAiResult, "materializeAiResult");
     __name(extractWorkersAiRaw, "extractWorkersAiRaw");
     __name(runCfModelOnce, "runCfModelOnce");
     __name(callCfWorkersAi, "callCfWorkersAi");
@@ -6653,12 +6800,18 @@ chatRouter.post("/visitor/ticket", async (c) => {
     c.executionCtx.waitUntil(
       (async () => {
         try {
+          const { getSiteSettingsMap: getSiteSettingsMap2 } = await Promise.resolve().then(() => (init_sites(), sites_exports));
+          const { getSystemSetting: getSystemSetting2 } = await Promise.resolve().then(() => (init_settings(), settings_exports));
+          const siteMap = await getSiteSettingsMap2(c.env.DB, site.id);
+          const ticketFlag = (siteMap["ai_ticket_auto_reply"] != null && String(siteMap["ai_ticket_auto_reply"]).trim() !== "" ? String(siteMap["ai_ticket_auto_reply"]) : await getSystemSetting2(c.env.DB, "ai_ticket_auto_reply")) || "true";
+          if (ticketFlag === "false")
+            return;
           const { askKnowledge: askKnowledge2 } = await Promise.resolve().then(() => (init_kbService(), kbService_exports));
-          const { answer } = await askKnowledge2(c.env, contentStr);
+          const { answer } = await askKnowledge2(c.env, contentStr, [], { siteId: site.id });
           if (!answer)
             return;
-          const aiReplyText = `\u3010AI \u667A\u80FD\u9884\u7B54\u590D\u3011
-\u6211\u4EEC\u5DF2\u6536\u5230\u60A8\u7684\u7559\u8A00\u5E76\u5DF2\u63D0\u9192\u4EBA\u5DE5\u5BA2\u670D\u7A0D\u540E\u8DDF\u8FDB\uFF01\u6839\u636E\u4F01\u4E1A\u77E5\u8BC6\u5E93\uFF0C\u521D\u6B65\u4E3A\u60A8\u67E5\u8BE2\u5230\u4EE5\u4E0B\u53C2\u8003\u4FE1\u606F\uFF1A
+          const aiReplyText = `AI pre-reply:
+We received your message and notified an agent. Based on this site's knowledge base:
 
 ${answer}`;
           const aiMsgId = "msg_" + crypto.randomUUID().slice(0, 10);
@@ -9387,6 +9540,7 @@ init_performance2();
 init_kb();
 init_kbService();
 init_settings();
+init_sites();
 var kbRouter = new Hono2();
 kbRouter.use("/admin/kb/*", async (c, next) => {
   const admin = await requireAdmin(c);
@@ -9394,6 +9548,26 @@ kbRouter.use("/admin/kb/*", async (c, next) => {
     return admin;
   await next();
 });
+function readSiteId3(c, body) {
+  return (c.req.query("site_id") || "").trim() || (c.req.header("X-Site-Id") || "").trim() || (typeof body?.site_id === "string" ? body.site_id.trim() : "");
+}
+__name(readSiteId3, "readSiteId");
+async function readAiConfigForSite(db, siteId) {
+  const siteMap = siteId ? await getSiteSettingsMap(db, siteId) : {};
+  const pick = /* @__PURE__ */ __name(async (key, fallback = "") => {
+    const local = siteMap[key];
+    if (local != null && String(local).trim() !== "")
+      return String(local);
+    return await getSystemSetting(db, key) || fallback;
+  }, "pick");
+  return {
+    strategy: await pick("ai_reply_strategy", "always") || "always",
+    systemPrompt: await pick("ai_system_prompt", ""),
+    poolJson: await pick("ai_model_pool", ""),
+    ticketAutoReplyStr: await pick("ai_ticket_auto_reply", "true")
+  };
+}
+__name(readAiConfigForSite, "readAiConfigForSite");
 function checkApiKey(c) {
   const secret = c.env.KB_API_TOKEN || c.env.ADMIN_SECURITY_CODE;
   if (!secret)
@@ -9412,7 +9586,8 @@ kbRouter.post("/kb/ask", async (c) => {
       return c.json({ status: 400, msg: "Question cannot be empty", data: null }, 400);
     }
     const history = Array.isArray(body.history) ? body.history : [];
-    const result = await askKnowledge(c.env, question, history);
+    const siteId = readSiteId3(c, body) || null;
+    const result = await askKnowledge(c.env, question, history, { siteId });
     return c.json({ status: 200, msg: "ok", data: result }, 200);
   } catch (err) {
     return c.json({ status: 500, msg: "Knowledge Q&A error: " + err.message, data: null }, 500);
@@ -9518,10 +9693,15 @@ kbRouter.get("/kb/products-data/:id", async (c) => {
 });
 kbRouter.get("/admin/kb/documents", async (c) => {
   try {
+    const siteId = readSiteId3(c);
+    if (!siteId) {
+      return c.json({ status: 400, msg: "Select a site (site_id / X-Site-Id)", data: null }, 400);
+    }
     const domain2 = c.req.query("domain");
     const search = c.req.query("search");
     const relProductId = c.req.query("productId");
     const docs = await getKbDocuments(c.env.DB, {
+      siteId,
       domain: domain2,
       search,
       relProductId
@@ -9546,6 +9726,10 @@ kbRouter.get("/admin/kb/documents/:id", async (c) => {
 kbRouter.post("/admin/kb/documents", async (c) => {
   try {
     const body = await c.req.json();
+    const siteId = readSiteId3(c, body);
+    if (!siteId) {
+      return c.json({ status: 400, msg: "Select a site (site_id / X-Site-Id)", data: null }, 400);
+    }
     const { id, domain: domain2 = "support", title: title2, content, rel_product_id, tags } = body;
     if (!title2?.trim() || !content?.trim()) {
       return c.json({ status: 400, msg: "Document title and body are required", data: null }, 400);
@@ -9554,6 +9738,7 @@ kbRouter.post("/admin/kb/documents", async (c) => {
     const now = Date.now();
     const doc = {
       id: docId,
+      site_id: siteId,
       domain: domain2,
       title: title2.trim(),
       content: content.trim(),
@@ -9611,10 +9796,15 @@ kbRouter.post("/admin/kb/test-query", async (c) => {
     if (!query) {
       return c.json({ status: 400, msg: "Debug question cannot be empty", data: null }, 400);
     }
+    const siteId = readSiteId3(c, body);
+    if (!siteId) {
+      return c.json({ status: 400, msg: "Select a site (site_id / X-Site-Id)", data: null }, 400);
+    }
     const domains = body.domain ? [body.domain] : void 0;
     const results = await searchKnowledge(c.env, query, {
       domains,
       relProductId: body.productId,
+      siteId,
       topK: body.topK || 5,
       minScore: 0.1
     });
@@ -9625,26 +9815,31 @@ kbRouter.post("/admin/kb/test-query", async (c) => {
 });
 kbRouter.post("/admin/kb/sync-from-cms", async (c) => {
   try {
+    const siteId = readSiteId3(c);
+    if (!siteId) {
+      return c.json({ status: 400, msg: "Select a site (site_id / X-Site-Id)", data: null }, 400);
+    }
     let importedCount = 0;
-    const productsRes = await getCmsProducts(c.env.DB, { pageSize: 100 });
+    const productsRes = await getCmsProducts(c.env.DB, { siteId, pageSize: 100 });
     for (const p of productsRes.list) {
       const transZh = p.translations_json?.["zh-CN"] || Object.values(p.translations_json || {})[0];
       const title2 = p.title || transZh?.title || p.slug;
       const description = transZh?.description || transZh?.summary || "";
       const spec = typeof transZh?.spec_data === "object" ? JSON.stringify(transZh.spec_data) : transZh?.spec_data || "";
-      const content = `\u3010\u4EA7\u54C1\u578B\u53F7/\u540D\u79F0\u3011: ${title2}
-\u3010SKU\u3011: ${p.sku || "\u9ED8\u8BA4"}
-\u3010\u54C1\u724C\u3011: ${p.brand || "\u81EA\u6709\u54C1\u724C"}
-\u3010\u4EF7\u683C\u3011: ${p.price} ${p.price_currency}
-\u3010\u4EA7\u54C1\u4ECB\u7ECD\u3011:
+      const content = `Product: ${title2}
+SKU: ${p.sku || "-"}
+Brand: ${p.brand || "-"}
+Price: ${p.price} ${p.price_currency}
+Description:
 ${description}
-${spec ? `\u3010\u89C4\u683C\u53C2\u6570\u3011:
+${spec ? `Specs:
 ${spec}` : ""}`;
-      const docId = `cms_prod_${p.id}`;
+      const docId = `cms_prod_${siteId}_${p.id}`;
       const doc = {
         id: docId,
+        site_id: siteId,
         domain: "product",
-        title: `\u4EA7\u54C1: ${title2}`,
+        title: `Product: ${title2}`,
         content,
         rel_product_id: p.id,
         tags_json: JSON.stringify([p.brand, p.availability].filter(Boolean)),
@@ -9657,25 +9852,26 @@ ${spec}` : ""}`;
       await indexDocument(c.env, doc);
       importedCount++;
     }
-    const articlesRes = await getCmsArticles(c.env.DB, { pageSize: 100 });
+    const articlesRes = await getCmsArticles(c.env.DB, { siteId, pageSize: 100 });
     for (const a of articlesRes.list) {
       const transZh = a.translations_json?.["zh-CN"] || Object.values(a.translations_json || {})[0];
       const title2 = a.title || transZh?.title || a.slug;
       const articleContent = transZh?.content || transZh?.summary || "";
       if (!articleContent.trim())
         continue;
-      const content = `\u3010\u6587\u7AE0\u6807\u9898\u3011: ${title2}
-\u3010\u4F5C\u8005/\u53D1\u5E03\u3011: ${a.author || "\u4F01\u4E1A\u5B98\u65B9"}
-\u3010\u6B63\u6587/\u77E5\u8BC6\u5185\u5BB9\u3011:
+      const content = `Article: ${title2}
+Author: ${a.author || "Official"}
+Body:
 ${articleContent}`;
-      const docId = `cms_art_${a.id}`;
+      const docId = `cms_art_${siteId}_${a.id}`;
       const doc = {
         id: docId,
+        site_id: siteId,
         domain: "support",
-        title: `\u6587\u7AE0: ${title2}`,
+        title: `Article: ${title2}`,
         content,
         rel_product_id: null,
-        tags_json: JSON.stringify(["CMS\u6587\u7AE0"]),
+        tags_json: JSON.stringify(["CMS"]),
         chunks_count: 0,
         status: "ready",
         created_at: Date.now(),
@@ -9692,29 +9888,28 @@ ${articleContent}`;
 });
 kbRouter.get("/admin/kb/ai-config", async (c) => {
   try {
-    const strategy = await getSystemSetting(c.env.DB, "ai_reply_strategy") || "always";
-    const systemPrompt = await getSystemSetting(c.env.DB, "ai_system_prompt") || "";
-    const poolJson = await getSystemSetting(c.env.DB, "ai_model_pool");
+    const siteId = readSiteId3(c);
+    const cfg = await readAiConfigForSite(c.env.DB, siteId);
     let modelPool = DEFAULT_MODEL_POOL;
-    if (poolJson) {
+    if (cfg.poolJson) {
       try {
-        const parsed = JSON.parse(poolJson);
+        const parsed = JSON.parse(cfg.poolJson);
         if (Array.isArray(parsed) && parsed.length > 0) {
           modelPool = normalizeModelPool(parsed);
         }
       } catch (e) {
       }
     }
-    const ticketAutoReplyStr = await getSystemSetting(c.env.DB, "ai_ticket_auto_reply");
-    const ticketAutoReply = ticketAutoReplyStr !== "false";
+    const ticketAutoReply = cfg.ticketAutoReplyStr !== "false";
     return c.json({
       status: 200,
       msg: "ok",
       data: {
-        strategy,
-        system_prompt: systemPrompt,
+        strategy: cfg.strategy,
+        system_prompt: cfg.systemPrompt,
         model_pool: modelPool,
-        ticket_auto_reply: ticketAutoReply
+        ticket_auto_reply: ticketAutoReply,
+        site_id: siteId || null
       }
     }, 200);
   } catch (err) {
@@ -9724,6 +9919,7 @@ kbRouter.get("/admin/kb/ai-config", async (c) => {
 kbRouter.post("/admin/kb/ai-config", async (c) => {
   try {
     const body = await c.req.json();
+    const siteId = readSiteId3(c, body);
     const updates = {};
     if (body.strategy) {
       updates["ai_reply_strategy"] = body.strategy;
@@ -9737,8 +9933,12 @@ kbRouter.post("/admin/kb/ai-config", async (c) => {
     if (body.ticket_auto_reply !== void 0) {
       updates["ai_ticket_auto_reply"] = String(body.ticket_auto_reply);
     }
-    await updateSystemSettings(c.env.DB, updates);
-    return c.json({ status: 200, msg: "AI agent settings updated", data: null }, 200);
+    if (siteId) {
+      await updateSiteSettings(c.env.DB, siteId, updates);
+    } else {
+      await updateSystemSettings(c.env.DB, updates);
+    }
+    return c.json({ status: 200, msg: "AI agent settings updated", data: { site_id: siteId || null } }, 200);
   } catch (err) {
     return c.json({ status: 500, msg: "Failed to save AI settings: " + err.message, data: null }, 500);
   }
@@ -10170,10 +10370,10 @@ __name(runGaReport, "runGaReport");
 
 // src/worker/routes/analytics.ts
 var analyticsRouter = new Hono2();
-function readSiteId3(c, body) {
+function readSiteId4(c, body) {
   return (c.req.query("site_id") || "").trim() || (c.req.header("X-Site-Id") || "").trim() || (typeof body?.site_id === "string" ? body.site_id.trim() : "");
 }
-__name(readSiteId3, "readSiteId");
+__name(readSiteId4, "readSiteId");
 analyticsRouter.get("/analytics/inquiry-funnel", async (c) => {
   try {
     const agent = await requireAgent(c);
@@ -10192,7 +10392,7 @@ analyticsRouter.get("/analytics/ga/status", async (c) => {
     const agent = await requireAgent(c);
     if (isErrorResponse(agent))
       return agent;
-    const siteId = readSiteId3(c);
+    const siteId = readSiteId4(c);
     if (siteId && !await agentCanAccessSite(c.env.DB, agent, siteId)) {
       return c.json({ success: false, message: "No permission to access this site" }, 403);
     }
@@ -10329,7 +10529,7 @@ analyticsRouter.post("/analytics/ga/property", async (c) => {
     if (isErrorResponse(admin))
       return admin;
     const body = await c.req.json();
-    const siteId = readSiteId3(c, body);
+    const siteId = readSiteId4(c, body);
     if (!siteId) {
       return c.json({ success: false, message: "Select a site before linking a GA4 property" }, 400);
     }
@@ -10356,7 +10556,7 @@ analyticsRouter.get("/analytics/ga/report", async (c) => {
     const agent = await requireAgent(c);
     if (isErrorResponse(agent))
       return agent;
-    const siteId = readSiteId3(c);
+    const siteId = readSiteId4(c);
     if (!siteId) {
       return c.json({ success: false, message: "Select a site before viewing GA reports" }, 400);
     }
@@ -10935,8 +11135,23 @@ init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
 init_performance2();
 init_conversations();
 init_kbService();
+init_sites();
 init_settings();
 init_sessionToken();
+async function resolveSiteAiSetting(db, siteId, key) {
+  const sid = (siteId || "").trim();
+  if (sid) {
+    try {
+      const map = await getSiteSettingsMap(db, sid);
+      const v = map[key];
+      if (v != null && String(v).trim() !== "")
+        return String(v);
+    } catch {
+    }
+  }
+  return getSystemSetting(db, key);
+}
+__name(resolveSiteAiSetting, "resolveSiteAiSetting");
 var ChatCoordinator = class {
   ctx;
   env;
@@ -11140,11 +11355,45 @@ var ChatCoordinator = class {
         });
         if (savedMsg.sender_type === "visitor" && savedMsg.message_type === "text") {
           this.ctx.waitUntil((async () => {
+            const publishAiText = /* @__PURE__ */ __name(async (content) => {
+              const aiMsgPayload = {
+                id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+                conversation_id: savedMsg.conversation_id,
+                sender_type: "agent",
+                sender_id: "ai_bot",
+                sender_name: "AI Assistant",
+                message_type: "text",
+                content,
+                status: "sent",
+                created_at: Date.now()
+              };
+              const savedAiMsg = await insertMessage(this.env.DB, aiMsgPayload);
+              this.broadcastToConversation(savedAiMsg.conversation_id, {
+                type: "message",
+                data: savedAiMsg
+              });
+              this.broadcastToAgents({
+                type: "message",
+                data: savedAiMsg
+              });
+              this.broadcastToAgents({
+                type: "conversation_update",
+                data: {
+                  conversation_id: savedAiMsg.conversation_id,
+                  last_message: savedAiMsg
+                }
+              });
+            }, "publishAiText");
             try {
-              const strategy = await getSystemSetting(this.env.DB, "ai_reply_strategy") || "always";
+              const convRow = await this.env.DB.prepare(
+                "SELECT site_id FROM conversations WHERE id = ?"
+              ).bind(savedMsg.conversation_id).first();
+              const siteId = (convRow?.site_id || "").trim() || null;
+              const strategy = await resolveSiteAiSetting(this.env.DB, siteId, "ai_reply_strategy") || "always";
               if (strategy === "disabled")
                 return;
-              const isExplicitAi = savedMsg.content.toLowerCase().startsWith("@ai");
+              const lower = savedMsg.content.toLowerCase();
+              const isExplicitAi = lower.startsWith("@ai") || lower.startsWith("@bot");
               let shouldTrigger = false;
               if (isExplicitAi) {
                 shouldTrigger = true;
@@ -11159,48 +11408,37 @@ var ChatCoordinator = class {
                 const hasRealAgent = hasOnlineAgent && agentSockets.length > 0;
                 shouldTrigger = !hasRealAgent;
               }
-              if (shouldTrigger) {
-                const queryText = savedMsg.content.replace(/^@ai\s*/i, "").trim();
-                if (!queryText)
-                  return;
-                const recentMsgs = await getMessagesByConversation(this.env.DB, savedMsg.conversation_id, 4);
-                const convHistory = recentMsgs.reverse().map((m) => ({
-                  role: m.sender_type === "visitor" ? "user" : "assistant",
-                  content: m.content
-                }));
-                const { answer } = await askKnowledge(this.env, queryText, convHistory);
-                if (answer) {
-                  const aiMsgPayload = {
-                    id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-                    conversation_id: savedMsg.conversation_id,
-                    sender_type: "agent",
-                    sender_id: "ai_bot",
-                    sender_name: "AI Assistant",
-                    message_type: "text",
-                    content: answer,
-                    status: "sent",
-                    created_at: Date.now()
-                  };
-                  const savedAiMsg = await insertMessage(this.env.DB, aiMsgPayload);
-                  this.broadcastToConversation(savedAiMsg.conversation_id, {
-                    type: "message",
-                    data: savedAiMsg
-                  });
-                  this.broadcastToAgents({
-                    type: "message",
-                    data: savedAiMsg
-                  });
-                  this.broadcastToAgents({
-                    type: "conversation_update",
-                    data: {
-                      conversation_id: savedAiMsg.conversation_id,
-                      last_message: savedAiMsg
-                    }
-                  });
-                }
+              if (!shouldTrigger)
+                return;
+              const queryText = savedMsg.content.replace(/^@(?:ai|bot)\s*/i, "").trim();
+              if (!queryText)
+                return;
+              const recentMsgs = await getMessagesByConversation(
+                this.env.DB,
+                savedMsg.conversation_id,
+                4
+              );
+              const convHistory = recentMsgs.reverse().map((m) => ({
+                role: m.sender_type === "visitor" ? "user" : "assistant",
+                content: m.content
+              }));
+              const { answer } = await askKnowledge(this.env, queryText, convHistory, { siteId });
+              if (answer) {
+                await publishAiText(answer);
+              } else {
+                await publishAiText(
+                  "AI assistant could not generate a reply right now. An agent will follow up shortly."
+                );
               }
             } catch (e) {
               console.warn("Failed to auto answer with KB RAG", e);
+              try {
+                const detail = String(e?.message || e || "unknown error").slice(0, 160);
+                await publishAiText(
+                  `AI assistant is temporarily unavailable (${detail}). An agent will follow up shortly.`
+                );
+              } catch {
+              }
             }
           })());
         }
