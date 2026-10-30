@@ -8,21 +8,24 @@
   <meta name="keywords" content="磁帧鱼,線上智慧客服,線上客服系統,AI客服,Cloudflare Workers,Durable Objects,CRM系統,知識庫RAG,獨立站客服,跨境出海,邊緣運算" />
   <meta name="robots" content="index, follow" />
   <meta name="author" content="磁帧鱼" />
-  <link rel="canonical" href="https://chat.ycz.me/zh-TW/" />
-  <link rel="alternate" hreflang="zh-CN" href="https://chat.ycz.me/" />
-  <link rel="alternate" hreflang="zh-TW" href="https://chat.ycz.me/zh-TW/" />
-  <link rel="alternate" hreflang="en" href="https://chat.ycz.me/en/" />
-  <link rel="alternate" hreflang="ja" href="https://chat.ycz.me/ja/" />
-  <link rel="alternate" hreflang="x-default" href="https://chat.ycz.me/" />
-  <meta property="og:type" content="website" />
+  <link rel="canonical" href="__PUBLIC_ORIGIN__/zh-TW/" />
+  <link rel="alternate" hreflang="zh-CN" href="__PUBLIC_ORIGIN__/" />
+  <link rel="alternate" hreflang="zh-TW" href="__PUBLIC_ORIGIN__/zh-TW/" />
+  <link rel="alternate" hreflang="en" href="__PUBLIC_ORIGIN__/en/" />
+  <link rel="alternate" hreflang="ja" href="__PUBLIC_ORIGIN__/ja/" />
+  <link rel="alternate" hreflang="es" href="__PUBLIC_ORIGIN__/es/" />
+  <link rel="alternate" hreflang="pt" href="__PUBLIC_ORIGIN__/pt/" />
+  <link rel="alternate" hreflang="ar" href="__PUBLIC_ORIGIN__/ar/" />
+  <link rel="alternate" hreflang="x-default" href="__PUBLIC_ORIGIN__/" />
+<meta property="og:type" content="website" />
   <meta property="og:locale" content="zh_TW" />
-  <meta property="og:url" content="https://chat.ycz.me/zh-TW/" />
+  <meta property="og:url" content="__PUBLIC_ORIGIN__/zh-TW/" />
   <meta property="og:title" content="磁帧鱼-線上智慧客服 — Cloudflare 邊緣原生客戶營運平台" />
   <meta property="og:description" content="線上客服 + AI 知識庫 + CRM 銷售漏斗 + 多語系 CMS，100% 運行於 Cloudflare 邊緣。一行腳本嵌入站點，開窗才建連。" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="磁帧鱼-線上智慧客服" />
   <meta name="twitter:description" content="面向獨立站、跨境出海與現代團隊的線上智慧客服與客戶營運底座，零伺服器維運。" />
-  <link rel="stylesheet" href="/landing.css" />
+  <link rel="stylesheet" href="/index/landing.css" />
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -46,8 +49,8 @@
       {
         "@type": "WebSite",
         "name": "磁帧鱼-線上智慧客服",
-        "url": "https://chat.ycz.me/zh-TW/",
-        "inLanguage": ["zh-TW", "zh-CN", "en", "ja"]
+        "url": "__PUBLIC_ORIGIN__/zh-TW/",
+        "inLanguage": ["zh-CN", "zh-TW", "en", "ja", "es", "pt", "ar"]
       },
       {
         "@type": "FAQPage",
@@ -89,11 +92,14 @@
         <span class="brand-mark">磁</span>
         <span>磁帧鱼-線上智慧客服</span>
       </a>
-      <nav class="lang-switch" aria-label="語言">
+            <nav class="lang-switch" aria-label="語言">
         <a href="/">简体</a>
         <a href="/zh-TW/" aria-current="page">繁體</a>
         <a href="/en/">EN</a>
         <a href="/ja/">日本語</a>
+        <a href="/es/">ES</a>
+        <a href="/pt/">PT</a>
+        <a href="/ar/">العربية</a>
       </nav>
     </div>
   </header>
@@ -212,9 +218,7 @@
         <p class="section-kicker">極簡接入</p>
         <h2 class="section-title">任意站點，一行程式碼輕鬆整合</h2>
         <p class="section-desc">將範例中的主機位址替換為您的部署網域。推薦配置 <code>__CF_IM_HOST__</code>，確保跨網域嵌入時精準呼叫 API。</p>
-        <pre class="code-panel"><code>&lt;script&gt;window.__CF_IM_HOST__="https://chat.ycz.me";&lt;/script&gt;
-&lt;link rel="stylesheet" href="https://chat.ycz.me/style.css"&gt;
-&lt;script src="https://chat.ycz.me/widget.js" data-cf-chat-sdk defer&gt;&lt;/script&gt;</code></pre>
+        <pre class="code-panel"><code id="embed-sample"></code></pre>
         <p class="code-note">右下角即可體驗即時線上客服掛件。本頁面僅供展示參考，正式環境可按需移除。</p>
       </div>
     </section>
@@ -230,14 +234,30 @@
 
   <footer class="wrap site-footer">
     <p>© 2026 磁帧鱼-線上智慧客服 · 運行於 Cloudflare 全球邊緣網路 · 現代企業級客戶營運底座</p>
-    <p>
+        <p>
       <a href="/">简体中文</a> ·
+      <a href="/zh-TW/">繁體中文</a> ·
       <a href="/en/">English</a> ·
-      <a href="/ja/">日本語</a>
+      <a href="/ja/">日本語</a> ·
+      <a href="/es/">Español</a> ·
+      <a href="/pt/">Português</a> ·
+      <a href="/ar/">العربية</a>
     </p>
   </footer>
-
+  <script>
+  (function () {
+    var o = window.location.origin;
+    var el = document.getElementById('embed-sample');
+    if (el) {
+      el.textContent =
+        '<script>window.__CF_IM_HOST__="' + o + '";</' + 'script>\n' +
+        '<link rel="stylesheet" href="' + o + '/style.css">\n' +
+        '<script src="' + o + '/widget.js" data-cf-chat-sdk defer></' + 'script>';
+    }
+  })();
+  </script>
   <script>window.__CF_IM_HOST__=window.location.origin;</script>
   <script src="/widget.js" defer></script>
 </body>
+
 </html>

@@ -1040,7 +1040,7 @@ async function ensureDefaultAdmin(db) {
       adminId,
       "admin",
       pwdHash,
-      "\u8D85\u7EA7\u7BA1\u7406\u5458",
+      "Super Admin",
       "admin",
       "online",
       Date.now()
@@ -1371,7 +1371,7 @@ __export(settings_exports, {
 async function getSystemSettings(db) {
   const res = await db.prepare("SELECT key, value FROM settings").all();
   const result = {
-    widget_title: "\u5728\u7EBF\u4E13\u5C5E\u5BA2\u670D",
+    widget_title: "Live chat",
     welcome_message: "Hello! How can we help you today?",
     offline_message: "No agents are online right now. Please leave a message and we will reply soon.",
     auto_reply_enabled: "true",
@@ -1481,6 +1481,7 @@ __export(sites_exports, {
   listSitesForAgent: () => listSitesForAgent,
   normalizeHost: () => normalizeHost,
   resolveSiteByHost: () => resolveSiteByHost,
+  resolveSiteForVisitor: () => resolveSiteForVisitor,
   resolveSiteFromRequest: () => resolveSiteFromRequest,
   setAgentSites: () => setAgentSites,
   updateSite: () => updateSite,
@@ -1659,7 +1660,7 @@ async function createSite(db, data) {
   for (const h of hosts) {
     const taken = await db.prepare("SELECT site_id FROM site_hosts WHERE host = ?").bind(h).first();
     if (taken)
-      throw new Error(`\u57DF\u540D ${h} \u5DF2\u5F52\u5C5E\u5176\u4ED6\u7AD9\u70B9`);
+      throw new Error(`Domain ${h} is already assigned to another site`);
   }
   const id = `site_${crypto.randomUUID().slice(0, 8)}`;
   const now = Date.now();
@@ -1680,7 +1681,7 @@ async function createSite(db, data) {
     await updateSiteSettings(db, id, {
       widget_brand_color: "#07c160",
       widget_position: "bottom-right",
-      widget_button_title: "\u5728\u7EBF\u5BA2\u670D",
+      widget_button_title: "Live chat",
       widget_items_json: DEFAULT_WIDGET_ITEMS_JSON,
       welcome_message: "Hello! How can we help you today?",
       offline_message: "No agents are online right now. Please leave a message and we will reply soon.",
@@ -1712,7 +1713,7 @@ async function updateSite(db, id, data) {
     for (const h of hosts) {
       const taken = await db.prepare("SELECT site_id FROM site_hosts WHERE host = ?").bind(h).first();
       if (taken && taken.site_id !== id) {
-        throw new Error(`\u57DF\u540D ${h} \u5DF2\u5F52\u5C5E\u5176\u4ED6\u7AD9\u70B9`);
+        throw new Error(`Domain ${h} is already assigned to another site`);
       }
     }
     await db.prepare("DELETE FROM site_hosts WHERE site_id = ?").bind(id).run();
@@ -1788,6 +1789,28 @@ async function resolveSiteFromRequest(db, req, pageUrl) {
     return null;
   return resolveSiteByHost(db, host);
 }
+async function resolveSiteForVisitor(db, req, opts) {
+  const hint = (opts?.hostHint || "").trim();
+  const pageHost = hint ? normalizeHost(hint) : hostFromRequest(req, opts?.pageUrl);
+  if (pageHost) {
+    const matched = await resolveSiteByHost(db, pageHost);
+    if (matched)
+      return matched;
+  }
+  let apiHost = "";
+  try {
+    apiHost = normalizeHost(new URL(req.url).hostname);
+  } catch {
+    apiHost = "";
+  }
+  if (apiHost && pageHost && apiHost === pageHost) {
+    const sites = await listSites(db);
+    const active = sites.find((s) => s.status === "active");
+    if (active)
+      return active;
+  }
+  return null;
+}
 var SITE_SETTING_KEYS, SITE_SETTING_KEY_SET;
 var init_sites = __esm({
   "src/worker/db/sites.ts"() {
@@ -1836,6 +1859,7 @@ var init_sites = __esm({
     __name(setAgentSites, "setAgentSites");
     __name(agentCanAccessSite, "agentCanAccessSite");
     __name(resolveSiteFromRequest, "resolveSiteFromRequest");
+    __name(resolveSiteForVisitor, "resolveSiteForVisitor");
   }
 });
 
@@ -1962,7 +1986,7 @@ async function getOrCreateConversation(db, visitorId, siteId, visitorName, visit
   }
   const id = `conv_${crypto.randomUUID().slice(0, 8)}`;
   const now = Date.now();
-  const name = visitorName || `\u8BBF\u5BA2_${visitorId.slice(-4)}`;
+  const name = visitorName || `Visitor_${visitorId.slice(-4)}`;
   const allocated = await findLeastLoadedOnlineAgent(db);
   const settingsMap = await getMergedSiteSettings(db, siteId);
   let welcomeMsg = getSettingForLang(settingsMap, "welcome_message", visitorLang || "en", "");
@@ -2022,7 +2046,7 @@ async function getOrCreateConversation(db, visitorId, siteId, visitorName, visit
   ).bind(
     welcomeMsgId,
     id,
-    "${system_agent:\u7CFB\u7EDF\u4E13\u5C5E\u5BA2\u670D}",
+    "${system_agent:Support agent}",
     defaultWelcomeTemplate,
     now
   ).run();
@@ -2113,7 +2137,7 @@ async function getOrCreateWhatsAppConversation(db, waId, senderName, siteId) {
       id, visitor_id, visitor_name, site_id, group_id, status, platform,
       unread_agent_count, unread_visitor_count, last_message_text,
       last_message_time, created_at, assigned_agent_id, assigned_agent_name
-    ) VALUES (?, ?, ?, ?, 'grp_default', 'active', 'whatsapp', 1, 0, 'WhatsApp \u6D88\u606F', ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, 'grp_default', 'active', 'whatsapp', 1, 0, 'WhatsApp message', ?, ?, ?, ?)
   `).bind(
     id,
     visitorId,
@@ -2418,33 +2442,33 @@ async function dispatchLeaveMessageNotification(env2, data) {
   const settings = await getSystemSettings(env2.DB);
   const channels = (settings["notify_channels"] || "").split(",").map((s) => s.trim());
   const result = {};
-  const timeStr = (/* @__PURE__ */ new Date()).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" });
+  const timeStr = (/* @__PURE__ */ new Date()).toLocaleString("en-US", { timeZone: "UTC" });
   const toEmail = settings["notify_email_to"];
   if (channels.includes("email") && toEmail) {
-    const subject = `\u3010\u5728\u7EBF\u5BA2\u670D\u3011\u6536\u5230\u6765\u81EA [${data.visitor_name}] \u7684\u65B0\u79BB\u7EBF\u7559\u8A00`;
+    const subject = `[Live chat] New offline message from [${data.visitor_name}]`;
     const html = `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e5e7eb; rounded: 16px;">
-        <h2 style="color: #111827; margin-bottom: 16px; font-size: 18px; border-bottom: 2px solid #07c160; padding-bottom: 8px;">\u{1F514} \u65B0\u5BA2\u6237\u79BB\u7EBF\u7559\u8A00\u901A\u77E5</h2>
+        <h2 style="color: #111827; margin-bottom: 16px; font-size: 18px; border-bottom: 2px solid #07c160; padding-bottom: 8px;">New offline visitor message</h2>
         <table style="width: 100%; border-collapse: collapse; font-size: 14px; color: #374151;">
           <tr>
-            <td style="padding: 8px 0; font-weight: bold; width: 90px;">\u5BA2\u6237\u79F0\u547C\uFF1A</td>
+            <td style="padding: 8px 0; font-weight: bold; width: 90px;">Name:</td>
             <td style="padding: 8px 0; color: #111827;">${data.visitor_name}</td>
           </tr>
           <tr>
-            <td style="padding: 8px 0; font-weight: bold;">\u8054\u7CFB\u65B9\u5F0F\uFF1A</td>
+            <td style="padding: 8px 0; font-weight: bold;">Contact:</td>
             <td style="padding: 8px 0; color: #2563eb; font-weight: 600;">${data.contact}</td>
           </tr>
           <tr>
-            <td style="padding: 8px 0; font-weight: bold;">\u7559\u8A00\u65F6\u95F4\uFF1A</td>
+            <td style="padding: 8px 0; font-weight: bold;">Time:</td>
             <td style="padding: 8px 0; color: #6b7280;">${timeStr}</td>
           </tr>
         </table>
         <div style="margin-top: 16px; padding: 14px; background-color: #f9fafb; border-left: 4px solid #07c160; border-radius: 4px;">
-          <div style="font-weight: bold; font-size: 13px; color: #4b5563; margin-bottom: 6px;">\u7559\u8A00\u9700\u6C42\u8BE6\u60C5\uFF1A</div>
+          <div style="font-weight: bold; font-size: 13px; color: #4b5563; margin-bottom: 6px;">Message:</div>
           <div style="font-size: 14px; color: #111827; line-height: 1.6; white-space: pre-wrap;">${data.content}</div>
         </div>
         <div style="margin-top: 20px; font-size: 12px; color: #9ca3af; text-align: center;">
-          \u6B64\u90AE\u4EF6\u7531 Cloudflare \u5728\u7EBF\u5BA2\u670D\u7CFB\u7EDF\u81EA\u52A8\u53D1\u9001\uFF0C\u8BF7\u53CA\u65F6\u767B\u5F55\u540E\u53F0\u8DDF\u8FDB\u3002
+          Sent automatically by the live chat system. Please follow up in the admin console.
         </div>
       </div>
     `;
@@ -2453,24 +2477,24 @@ async function dispatchLeaveMessageNotification(env2, data) {
   const tgToken = settings["telegram_bot_token"];
   const tgChatId = settings["telegram_chat_id"];
   if (channels.includes("telegram") && tgToken && tgChatId) {
-    const tgMsg = `\u{1F514} <b>\u3010\u5728\u7EBF\u5BA2\u670D\u3011\u6536\u5230\u65B0\u7684\u79BB\u7EBF\u5BA2\u6237\u7559\u8A00</b>
+    const tgMsg = `\u{1F514} <b>[Live chat] New offline visitor message</b>
 
-\u{1F464} <b>\u5BA2\u6237\u79F0\u547C\uFF1A</b> ${data.visitor_name}
-\u{1F4DE} <b>\u8054\u7CFB\u65B9\u5F0F\uFF1A</b> <code>${data.contact}</code>
-\u23F0 <b>\u7559\u8A00\u65F6\u95F4\uFF1A</b> ${timeStr}
+\u{1F464} <b>Name:</b> ${data.visitor_name}
+\u{1F4DE} <b>Contact:</b> <code>${data.contact}</code>
+\u23F0 <b>Time:</b> ${timeStr}
 
-\u{1F4AC} <b>\u7559\u8A00\u9700\u6C42\uFF1A</b>
+\u{1F4AC} <b>Message:</b>
 ${data.content}`;
     result.telegram = await sendViaTelegram(tgToken, tgChatId, tgMsg);
   }
   const wecomUrl = settings["wecom_webhook_url"];
   if (channels.includes("wecom") && wecomUrl) {
-    const wecomMsg = `### \u{1F514} \u6536\u5230\u65B0\u7684\u5BA2\u6237\u79BB\u7EBF\u7559\u8A00
-> **\u5BA2\u6237\u79F0\u547C**\uFF1A<font color="info">${data.visitor_name}</font>
-> **\u8054\u7CFB\u65B9\u5F0F**\uFF1A<font color="warning">${data.contact}</font>
-> **\u7559\u8A00\u65F6\u95F4**\uFF1A${timeStr}
+    const wecomMsg = `### New offline visitor message
+> **Name**: <font color="info">${data.visitor_name}</font>
+> **Contact**: <font color="warning">${data.contact}</font>
+> **Time**: ${timeStr}
 
-**\u7559\u8A00\u5185\u5BB9**\uFF1A
+**Message**:
 ${data.content}`;
     result.wecom = await sendViaWeCom(wecomUrl, wecomMsg);
   }
@@ -3114,7 +3138,7 @@ async function testAiChannel(env2, channel2) {
     return { success: true, latencyMs, reply: asTrimmedText(reply).substring(0, 50) };
   } catch (e) {
     const latencyMs = Date.now() - start;
-    return { success: false, latencyMs, error: e.message || "\u8FDE\u63A5\u5931\u8D25" };
+    return { success: false, latencyMs, error: e.message || "Connection failed" };
   }
 }
 async function callLlmWithFallback(env2, messages, configuredChannels) {
@@ -3128,13 +3152,13 @@ async function callLlmWithFallback(env2, messages, configuredChannels) {
       if (text) {
         return { text, channelName: ch.name };
       }
-      errors.push(`${ch.name}: \u8FD4\u56DE\u7A7A\u5185\u5BB9`);
+      errors.push(`${ch.name}: empty response`);
     } catch (err) {
-      console.warn(`[AI Failover] \u901A\u9053\u3010${ch.name}\u3011\u8C03\u7528\u5931\u8D25: ${err.message}\uFF0C\u6B63\u5728\u65E0\u611F\u5C1D\u8BD5\u4E0B\u4E00\u901A\u9053...`);
+      console.warn(`[AI Failover] channel [${ch.name}] failed: ${err.message}; trying next\u2026`);
       errors.push(`${ch.name}: ${err.message}`);
     }
   }
-  throw new Error(`\u5168\u90E8 ${activeChannels.length} \u4E2A AI \u6A21\u578B\u901A\u9053\u5747\u8C03\u7528\u5931\u8D25: ` + errors.join("; "));
+  throw new Error("All AI model channels failed: " + errors.join("; "));
 }
 async function askKnowledge(env2, question, conversationHistory = [], options) {
   const siteId = (options?.siteId || "").trim() || null;
@@ -3144,7 +3168,7 @@ async function askKnowledge(env2, question, conversationHistory = [], options) {
     topK: 3,
     minScore: 0.35
   });
-  const contextText = searchResults.map((r, i) => `[\u53C2\u8003\u8D44\u6599 ${i + 1} - ${r.title || "\u4F01\u4E1A\u8D44\u6599"}]:
+  const contextText = searchResults.map((r, i) => `[Reference ${i + 1} - ${r.title || "Knowledge"}]:
 ${r.chunk.content}`).join("\n\n");
   const customPrompt = await getAiConfigValue(env2, "ai_system_prompt", siteId);
   const defaultPrompt = `You are a professional, polite company support assistant.
@@ -3327,7 +3351,7 @@ ${JSON.stringify(fields)}`;
       results[targetLang] = { ok: true };
     } catch (err) {
       console.error(`AI translation failed for ${targetLang}:`, err);
-      results[targetLang] = { ok: false, error: err?.message || "\u7FFB\u8BD1\u5F02\u5E38" };
+      results[targetLang] = { ok: false, error: err?.message || "Translation error" };
     }
   }
   return { translations, results, used_channel: lastUsedChannel };
@@ -3403,7 +3427,7 @@ var init_kbService = __esm({
       },
       {
         id: "default_cf_deepseek_r1",
-        name: "Cloudflare DeepSeek-R1-32B (\u5B98\u65B9\u514D\u8D39\u63A8\u7406)",
+        name: "Cloudflare DeepSeek-R1-32B (official free inference)",
         type: "cf_workers_ai",
         model: "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
         enabled: false
@@ -6154,11 +6178,13 @@ async function insertMessage(db, msg) {
   ).run();
   let summary = fullMsg.content;
   if (fullMsg.message_type === "image")
-    summary = "[\u56FE\u7247]";
+    summary = "[Image]";
   else if (fullMsg.message_type === "audio")
-    summary = "[\u8BED\u97F3]";
+    summary = "[Voice]";
   else if (fullMsg.message_type === "file")
-    summary = "[\u6587\u4EF6]";
+    summary = "[File]";
+  else if (fullMsg.message_type === "video")
+    summary = "[Video]";
   if (fullMsg.sender_type === "visitor") {
     await db.prepare(
       `UPDATE conversations SET 
@@ -6205,7 +6231,7 @@ __name(getLanguages, "getLanguages");
 async function addLanguage(db, code, name) {
   const existing = await db.prepare("SELECT code FROM i18n_languages WHERE code = ?").bind(code).first();
   if (existing) {
-    throw new Error(`\u8BED\u8A00\u4EE3\u7801 ${code} \u5DF2\u5B58\u5728`);
+    throw new Error(`Language code ${code} already exists`);
   }
   await db.prepare(
     "INSERT INTO i18n_languages (code, name, is_default, created_at) VALUES (?, ?, 0, ?)"
@@ -6356,7 +6382,7 @@ chatRouter.post("/visitor/init", async (c) => {
       return c.json({ success: false, message: "Missing visitor id" }, 400);
     }
     const pageUrl = page_context && typeof page_context === "object" ? page_context.url : void 0;
-    const site = await resolveSiteFromRequest(c.env.DB, c.req.raw, pageUrl);
+    const site = await resolveSiteForVisitor(c.env.DB, c.req.raw, { pageUrl });
     if (!site) {
       return c.json(
         { success: false, message: "This domain is not registered; live chat is unavailable" },
@@ -6634,7 +6660,7 @@ chatRouter.post("/admin/conversations/batch-cleanup", async (c) => {
 chatRouter.get("/widget/config", async (c) => {
   try {
     const hostHint = (c.req.query("host") || "").trim();
-    const site = hostHint ? await resolveSiteByHost(c.env.DB, hostHint) : await resolveSiteFromRequest(c.env.DB, c.req.raw);
+    const site = await resolveSiteForVisitor(c.env.DB, c.req.raw, { hostHint });
     if (!site) {
       c.header("Cache-Control", "no-store");
       return c.json(
@@ -6646,7 +6672,7 @@ chatRouter.get("/widget/config", async (c) => {
     const brand_color = settingsMap.widget_brand_color || "#07c160";
     const position = settingsMap.widget_position || "bottom-right";
     const custom_icon = settingsMap.widget_custom_icon || "";
-    const button_title = settingsMap.widget_button_title || "\u5728\u7EBF\u5BA2\u670D";
+    const button_title = settingsMap.widget_button_title || "Live chat";
     let widget_items_json = (settingsMap.widget_items_json || "").trim();
     if (!widget_items_json)
       widget_items_json = DEFAULT_WIDGET_ITEMS_JSON;
@@ -6706,7 +6732,7 @@ chatRouter.post("/visitor/ticket", async (c) => {
     if (!content || !contact) {
       return c.json({ success: false, message: "Contact info and message are required" }, 400);
     }
-    const name = String(visitor_name || "\u8BBF\u5BA2").trim().slice(0, 64) || "\u8BBF\u5BA2";
+    const name = String(visitor_name || "Visitor").trim().slice(0, 64) || "Visitor";
     const contactStr = String(contact).trim().slice(0, 200);
     const contentStr = String(content).trim().slice(0, 4e3);
     const vid = String(visitor_id || "").trim() || `v_ticket_${crypto.randomUUID().slice(0, 8)}`;
@@ -6721,21 +6747,19 @@ chatRouter.post("/visitor/ticket", async (c) => {
       }
       if (lines.length > 0) {
         extraText = `
-\u3010\u6269\u5C55\u5B57\u6BB5\u3011
+[Extra fields]
 ` + lines.join("\n");
       }
     }
     const srcLine = source_url ? `
-\u6765\u6E90\u9875\uFF1A${String(source_url).slice(0, 500)}` : "";
-    const ticketContent = `\u3010\u90AE\u4EF6\u7559\u8A00\u3011
-\u79F0\u547C\uFF1A${name}
-\u8054\u7CFB\u65B9\u5F0F\uFF1A${contactStr}
-\u7559\u8A00\u5185\u5BB9\uFF1A${contentStr}${extraText}${srcLine}`;
-    const site = await resolveSiteFromRequest(
-      c.env.DB,
-      c.req.raw,
-      typeof source_url === "string" ? source_url : void 0
-    );
+Source page: ${String(source_url).slice(0, 500)}` : "";
+    const ticketContent = `[Email inquiry]
+Name: ${name}
+Contact: ${contactStr}
+Message: ${contentStr}${extraText}${srcLine}`;
+    const site = await resolveSiteForVisitor(c.env.DB, c.req.raw, {
+      pageUrl: typeof source_url === "string" ? source_url : void 0
+    });
     if (!site) {
       return c.json({ success: false, message: "This domain is not registered as an authorized site" }, 403);
     }
@@ -6765,7 +6789,7 @@ chatRouter.post("/visitor/ticket", async (c) => {
         last_message_text = ?,
         last_message_time = ?,
         unread_agent_count = unread_agent_count + 1,
-        tag = COALESCE(NULLIF(tag, ''), '\u90AE\u4EF6\u7559\u8A00')
+        tag = COALESCE(NULLIF(tag, ''), 'Email inquiry')
       WHERE id = ?`
     ).bind(name, ticketContent.slice(0, 200), now, convId).run();
     try {
@@ -7023,9 +7047,9 @@ adminRouter.post("/notify/test", async (c) => {
       return admin;
     const { dispatchLeaveMessageNotification: dispatchLeaveMessageNotification2 } = await Promise.resolve().then(() => (init_notifier(), notifier_exports));
     const res = await dispatchLeaveMessageNotification2(c.env, {
-      visitor_name: "\u6D4B\u8BD5\u5BA2\u6237 (\u7CFB\u7EDF\u8054\u901A\u6D4B\u8BD5)",
+      visitor_name: "Test visitor (channel connectivity)",
       contact: "13800000000 / test@example.com",
-      content: "\u8FD9\u662F\u4E00\u6761\u6765\u81EA\u5BA2\u670D\u7BA1\u7406\u7CFB\u7EDF\u7684\u901A\u9053\u8054\u901A\u6027\u6D4B\u8BD5\u6D88\u606F\uFF0C\u5982\u679C\u60A8\u80FD\u770B\u5230\u6B64\u5185\u5BB9\uFF0C\u8BF4\u660E\u901A\u77E5\u670D\u52A1\u914D\u7F6E\u5B8C\u5168\u6B63\u5E38\uFF01"
+      content: "This is a channel connectivity test from the admin console. If you receive it, notification settings are working."
     });
     return c.json({ success: true, data: res });
   } catch (err) {
@@ -7332,7 +7356,7 @@ async function createPrivateChat(db, title2, password, agentId, expiresHours) {
   await db.prepare(
     `INSERT INTO private_chats (
       id, title, password_hash, plain_password, agent_id, status, last_message_text, last_message_time, created_at, expires_at
-    ) VALUES (?, ?, ?, ?, ?, 'active', '\u79C1\u5BC6\u4F1A\u8BDD\u5DF2\u521B\u5EFA', ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, 'active', 'Private chat created', ?, ?, ?)`
   ).bind(
     id,
     title2,
@@ -7348,11 +7372,11 @@ async function createPrivateChat(db, title2, password, agentId, expiresHours) {
       id, visitor_id, visitor_name, assigned_agent_id, group_id, status,
       unread_agent_count, unread_visitor_count, last_message_text,
       last_message_time, created_at
-    ) VALUES (?, ?, ?, ?, 'grp_vip', 'active', 0, 0, '\u79C1\u5BC6\u4F1A\u8BDD\u5DF2\u521B\u5EFA', ?, ?)`
+    ) VALUES (?, ?, ?, ?, 'grp_vip', 'active', 0, 0, 'Private chat created', ?, ?)`
   ).bind(
     id,
     `sec_client_${id.slice(-4)}`,
-    `[\u79C1\u5BC6] ${title2}`,
+    `[Private] ${title2}`,
     agentId,
     now,
     now
@@ -7364,7 +7388,7 @@ async function createPrivateChat(db, title2, password, agentId, expiresHours) {
     plain_password: password,
     agent_id: agentId,
     status: "active",
-    last_message_text: "\u79C1\u5BC6\u4F1A\u8BDD\u5DF2\u521B\u5EFA",
+    last_message_text: "Private chat created",
     last_message_time: now,
     created_at: now,
     expires_at: expiresAt
@@ -7468,7 +7492,7 @@ privateChatRouter.post("/private-chat/verify", async (c) => {
     }
     const res = await verifyPrivateChatPassword(c.env.DB, id, password);
     if (!res.success || !res.chat) {
-      return c.json({ success: false, message: res.message || "\u5BC6\u7801\u9A8C\u8BC1\u5931\u8D25" }, 401);
+      return c.json({ success: false, message: res.message || "Password verification failed" }, 401);
     }
     const messages = await getMessagesByConversation(c.env.DB, id, 50);
     return c.json({
@@ -7696,8 +7720,8 @@ async function startNewCustomerCycle(db, customerId, agentId, agentName) {
     customerId,
     nextCycle,
     agentId || "system",
-    agentName || "\u7CFB\u7EDF",
-    `\u3010\u5F00\u542F\u7B2C ${nextCycle} \u8F6E\u6210\u4EA4\u590D\u8D2D\u5468\u671F\u3011\u8001\u5BA2\u6237\u518D\u6B21\u54A8\u8BE2\uFF0C\u5F00\u542F\u65B0\u8F6E\u6B21\u63A8\u8FDB`,
+    agentName || "System",
+    `[Started repurchase cycle #${nextCycle}] Returning customer inquired again`,
     now
   ).run();
   return await db.prepare("SELECT * FROM crm_customers WHERE id = ?").bind(customerId).first();
@@ -7880,7 +7904,7 @@ webhookRouter.get("/webhook/whatsapp", async (c) => {
   const challenge = c.req.query("hub.challenge");
   const configuredToken = await getSystemSetting(c.env.DB, "whatsapp_verify_token") || "meta_im_secret";
   if (mode === "subscribe" && token === configuredToken) {
-    console.log("[Meta Webhook] WhatsApp Webhook \u63E1\u624B\u6821\u9A8C\u6210\u529F\uFF01");
+    console.log("[Meta Webhook] WhatsApp webhook verified");
     return new Response(challenge, { status: 200 });
   }
   return c.text("Forbidden: Invalid verify token", 403);
@@ -7903,27 +7927,27 @@ webhookRouter.post("/webhook/whatsapp", async (c) => {
         for (const msg of messages) {
           const waId = msg.from;
           const contactInfo = contacts.find((ct) => ct.wa_id === waId);
-          const senderName = contactInfo?.profile?.name || `WhatsApp\u5BA2\u6237(+${waId})`;
+          const senderName = contactInfo?.profile?.name || `WhatsApp (+${waId})`;
           let content = "";
           if (msg.type === "text") {
             content = msg.text?.body || "";
           } else if (msg.type === "image") {
-            content = msg.image?.caption ? `[\u56FE\u7247] ${msg.image.caption}` : "[\u56FE\u7247]";
+            content = msg.image?.caption ? `[Image] ${msg.image.caption}` : "[Image]";
           } else if (msg.type === "video") {
-            content = "[\u89C6\u9891\u6D88\u606F]";
+            content = "[Video]";
           } else if (msg.type === "audio") {
-            content = "[\u8BED\u97F3\u7559\u8A00]";
+            content = "[Voice]";
           } else if (msg.type === "document") {
-            content = `[\u6587\u6863\u9644\u4EF6] ${msg.document?.filename || ""}`;
+            content = `[File] ${msg.document?.filename || ""}`;
           } else {
-            content = `[${msg.type || "\u672A\u77E5"}\u6D88\u606F]`;
+            content = `[${msg.type || "unknown"} message]`;
           }
           if (!content)
             continue;
           const sites = await listSites(c.env.DB);
           const waSite = sites.find((s) => s.status === "active");
           if (!waSite) {
-            console.warn("[Meta Webhook] \u65E0\u542F\u7528\u7AD9\u70B9\uFF0C\u4E22\u5F03 WhatsApp \u6D88\u606F");
+            console.warn("[Meta Webhook] no active site; drop WhatsApp message");
             continue;
           }
           const conv = await getOrCreateWhatsAppConversation(
@@ -7933,13 +7957,13 @@ webhookRouter.post("/webhook/whatsapp", async (c) => {
             waSite.id
           );
           await insertWhatsAppMessage(c.env.DB, conv.id, waId, senderName, content);
-          console.log(`[Meta Webhook] \u6210\u529F\u63A5\u6536 WhatsApp \u7528\u6237 (+${waId}) \u7684\u65B0\u6D88\u606F\uFF1A${content}`);
+          console.log(`[Meta Webhook] WhatsApp (+${waId}): ${content}`);
         }
       }
     }
     return c.json({ status: "success" }, 200);
   } catch (err) {
-    console.error("[Meta Webhook] \u5904\u7406\u6D88\u606F\u63A8\u9001\u5F02\u5E38:", err);
+    console.error("[Meta Webhook] push handler error:", err);
     return c.json({ status: "error", message: err.message }, 200);
   }
 });
@@ -7986,7 +8010,7 @@ function emptyFormLocaleBundle() {
 __name(emptyFormLocaleBundle, "emptyFormLocaleBundle");
 function displayFormTitle(form, defaultLang) {
   const bundle = pickLocaleBundle(form.translations_json, defaultLang || "zh-CN", defaultLang);
-  return bundle?.title?.trim() || form.key || "Untitled form";
+  return bundle?.title?.trim() || form.key || "";
 }
 __name(displayFormTitle, "displayFormTitle");
 
@@ -8501,7 +8525,7 @@ formsRouter.post("/public/forms/:key/submit", async (c) => {
       success: true,
       data: {
         id: subId,
-        message: form.style?.success_message || "\u63D0\u4EA4\u6210\u529F\uFF01"
+        message: form.style?.success_message || "Submitted successfully!"
       }
     });
   } catch (err) {
@@ -10043,7 +10067,7 @@ async function getInquiryFunnelStats(db, rangeDays = 7, siteIdFilter) {
       `SELECT COUNT(*) as c FROM messages
          WHERE sender_type = 'visitor'
            AND created_at >= ? AND created_at <= ?
-           AND content LIKE '\u3010\u90AE\u4EF6\u7559\u8A00\u3011%'`
+           AND (content LIKE '[Email inquiry]%' OR content LIKE '\u3010\u90AE\u4EF6\u7559\u8A00\u3011%')`
     ).bind(from, to).first();
     tickets = ticketRow?.c || 0;
     try {
@@ -10085,7 +10109,7 @@ async function getInquiryFunnelStats(db, rangeDays = 7, siteIdFilter) {
           `SELECT COUNT(*) as c FROM messages
              WHERE sender_type = 'visitor' AND conversation_id IN (${ph})
                AND created_at >= ? AND created_at <= ?
-               AND content LIKE '\u3010\u90AE\u4EF6\u7559\u8A00\u3011%'`
+               AND (content LIKE '[Email inquiry]%' OR content LIKE '\u3010\u90AE\u4EF6\u7559\u8A00\u3011%')`
         ).bind(...batch, from, to).first();
         tickets += tk?.c || 0;
       }
@@ -10193,7 +10217,7 @@ async function exchangeGaCode(creds, code, redirectUri) {
   });
   const json = await res.json();
   if (!res.ok) {
-    throw new Error(json.error_description || json.error || "OAuth \u6362\u7968\u5931\u8D25");
+    throw new Error(json.error_description || json.error || "OAuth token exchange failed");
   }
   let email = "";
   if (json.access_token) {
@@ -10245,7 +10269,7 @@ async function refreshAccessToken(env2, db) {
   });
   const json = await res.json();
   if (!res.ok) {
-    throw new Error(json.error_description || json.error || "\u5237\u65B0 Google \u4EE4\u724C\u5931\u8D25\uFF0C\u8BF7\u91CD\u65B0\u8FDE\u63A5");
+    throw new Error(json.error_description || json.error || "Failed to refresh Google token. Please reconnect");
   }
   const access = json.access_token;
   const exp = Date.now() + (Number(json.expires_in) || 3600) * 1e3;
@@ -10273,7 +10297,7 @@ async function listGaProperties(env2, db) {
   );
   const json = await res.json();
   if (!res.ok) {
-    throw new Error(json.error?.message || "\u83B7\u53D6 GA \u5A92\u4F53\u8D44\u6E90\u5217\u8868\u5931\u8D25");
+    throw new Error(json.error?.message || "Failed to list GA properties");
   }
   const list = [];
   for (const acc of json.accountSummaries || []) {
@@ -10359,7 +10383,7 @@ async function runGaReport(env2, db, opts) {
   );
   const json = await res.json();
   if (!res.ok) {
-    const msg = json.error?.message || "GA \u62A5\u544A\u8BF7\u6C42\u5931\u8D25";
+    const msg = json.error?.message || "GA report request failed";
     const err = new Error(msg);
     err.status = res.status;
     throw err;
@@ -10465,12 +10489,12 @@ analyticsRouter.get("/analytics/ga/oauth/callback", async (c) => {
     const state = c.req.query("state") || "";
     const expected = await getSystemSetting(c.env.DB, "ga_oauth_state") || "";
     if (!code || !state || state !== expected) {
-      return c.redirect(`${adminBase}?ga=error&msg=${encodeURIComponent("OAuth state \u65E0\u6548")}`);
+      return c.redirect(`${adminBase}?ga=error&msg=${encodeURIComponent("Invalid OAuth state")}`);
     }
     const creds = await resolveGaOAuthCreds(c.env, c.env.DB);
     if (!creds.clientId || !creds.clientSecret) {
       return c.redirect(
-        `${adminBase}?ga=error&msg=${encodeURIComponent("\u672A\u914D\u7F6E Google \u5BA2\u6237\u7AEF ID/\u5BC6\u94A5")}`
+        `${adminBase}?ga=error&msg=${encodeURIComponent("Google Client ID/secret is not configured")}`
       );
     }
     const redirectUri = (c.env.GA_OAUTH_REDIRECT_URI || "").trim() || `${origin}/api/analytics/ga/oauth/callback`;
@@ -10486,7 +10510,7 @@ analyticsRouter.get("/analytics/ga/oauth/callback", async (c) => {
       const existing = await getSystemSetting(c.env.DB, GA_REFRESH_KEY);
       if (!existing) {
         return c.redirect(
-          `${adminBase}?ga=error&msg=${encodeURIComponent("\u672A\u83B7\u5F97 refresh_token\uFF0C\u8BF7\u64A4\u9500\u5E94\u7528\u8BBF\u95EE\u540E\u91CD\u8BD5")}`
+          `${adminBase}?ga=error&msg=${encodeURIComponent("No refresh_token received. Revoke app access and try again")}`
         );
       }
     }
@@ -10494,7 +10518,7 @@ analyticsRouter.get("/analytics/ga/oauth/callback", async (c) => {
     return c.redirect(`${adminBase}?ga=connected#inquiry_analytics`);
   } catch (e) {
     return c.redirect(
-      `${adminBase}?ga=error&msg=${encodeURIComponent(e.message || "\u8FDE\u63A5\u5931\u8D25")}`
+      `${adminBase}?ga=error&msg=${encodeURIComponent(e.message || "Connection failed")}`
     );
   }
 });
@@ -10635,7 +10659,7 @@ analyticsRouter.get("/analytics/ga/report", async (c) => {
     return c.json({ success: true, data, cached: false });
   } catch (err) {
     const status = err.status === 429 ? 429 : 500;
-    return c.json({ success: false, message: err.message || "GA \u62A5\u544A\u5931\u8D25" }, status);
+    return c.json({ success: false, message: err.message || "GA report failed" }, status);
   }
 });
 
@@ -10972,7 +10996,22 @@ var apiMessagesZhCN = {
   "Site not found": "\u7AD9\u70B9\u4E0D\u5B58\u5728",
   "Document saved": "\u6587\u6863\u4FDD\u5B58\u6210\u529F",
   "Missing site": "\u7F3A\u5C11\u7AD9\u70B9",
-  "Test error:": "\u6D4B\u8BD5\u5F02\u5E38:"
+  "Test error:": "\u6D4B\u8BD5\u5F02\u5E38:",
+  "Submitted successfully!": "\u63D0\u4EA4\u6210\u529F\uFF01",
+  "Password verification failed": "\u5BC6\u7801\u9A8C\u8BC1\u5931\u8D25",
+  "Invalid OAuth state": "OAuth state \u65E0\u6548",
+  "Google Client ID/secret is not configured": "\u672A\u914D\u7F6E Google \u5BA2\u6237\u7AEF ID/\u5BC6\u94A5",
+  "No refresh_token received. Revoke app access and try again": "\u672A\u83B7\u5F97 refresh_token\uFF0C\u8BF7\u64A4\u9500\u5E94\u7528\u8BBF\u95EE\u540E\u91CD\u8BD5",
+  "Connection failed": "\u8FDE\u63A5\u5931\u8D25",
+  "GA report failed": "GA \u62A5\u544A\u5931\u8D25",
+  "OAuth token exchange failed": "OAuth \u6362\u7968\u5931\u8D25",
+  "Failed to refresh Google token. Please reconnect": "\u5237\u65B0 Google \u4EE4\u724C\u5931\u8D25\uFF0C\u8BF7\u91CD\u65B0\u8FDE\u63A5",
+  "Failed to list GA properties": "\u83B7\u53D6 GA \u5A92\u4F53\u8D44\u6E90\u5217\u8868\u5931\u8D25",
+  "GA report request failed": "GA \u62A5\u544A\u8BF7\u6C42\u5931\u8D25",
+  "Translation error": "\u7FFB\u8BD1\u5F02\u5E38",
+  "Language code ${code} already exists": "\u8BED\u8A00\u4EE3\u7801 ${code} \u5DF2\u5B58\u5728",
+  "Domain ${h} is already assigned to another site": "\u57DF\u540D ${h} \u5DF2\u5F52\u5C5E\u5176\u4ED6\u7AD9\u70B9",
+  "All AI model channels failed:": "\u5168\u90E8 AI \u6A21\u578B\u901A\u9053\u5747\u8C03\u7528\u5931\u8D25:"
 };
 
 // src/worker/i18n/apiT.ts
@@ -11630,20 +11669,29 @@ app.get("*", async (c) => {
     }
   }
   const landingMap = {
-    "/": "/index.html",
-    "/index.html": "/index.html",
-    "/en": "/en/index.html",
-    "/en/": "/en/index.html",
-    "/zh-TW": "/zh-TW/index.html",
-    "/zh-TW/": "/zh-TW/index.html",
-    "/ja": "/ja/index.html",
-    "/ja/": "/ja/index.html"
+    "/": "/index/index.html",
+    "/index.html": "/index/index.html",
+    "/en": "/index/en/index.html",
+    "/en/": "/index/en/index.html",
+    "/zh-TW": "/index/zh-TW/index.html",
+    "/zh-TW/": "/index/zh-TW/index.html",
+    "/ja": "/index/ja/index.html",
+    "/ja/": "/index/ja/index.html",
+    "/es": "/index/es/index.html",
+    "/es/": "/index/es/index.html",
+    "/pt": "/index/pt/index.html",
+    "/pt/": "/index/pt/index.html",
+    "/ar": "/index/ar/index.html",
+    "/ar/": "/index/ar/index.html"
   };
   const landingAsset = landingMap[path];
   if (landingAsset) {
     const page = await c.env.ASSETS.fetch(new Request(new URL(landingAsset, url)));
     if (page.status === 200) {
-      return new Response(page.body, {
+      const origin = url.origin;
+      let html = await page.text();
+      html = html.split("__PUBLIC_ORIGIN__").join(origin);
+      return new Response(html, {
         status: 200,
         headers: {
           "Content-Type": "text/html; charset=utf-8",

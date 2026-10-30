@@ -8,21 +8,24 @@
   <meta name="keywords" content="磁帧鱼,在线智能客服,在线客服系统,AI客服,Cloudflare Workers,Durable Objects,CRM系统,知识库RAG,独立站客服,出海客服,边缘计算" />
   <meta name="robots" content="index, follow" />
   <meta name="author" content="磁帧鱼" />
-  <link rel="canonical" href="https://chat.ycz.me/" />
-  <link rel="alternate" hreflang="zh-CN" href="https://chat.ycz.me/" />
-  <link rel="alternate" hreflang="zh-TW" href="https://chat.ycz.me/zh-TW/" />
-  <link rel="alternate" hreflang="en" href="https://chat.ycz.me/en/" />
-  <link rel="alternate" hreflang="ja" href="https://chat.ycz.me/ja/" />
-  <link rel="alternate" hreflang="x-default" href="https://chat.ycz.me/" />
-  <meta property="og:type" content="website" />
+  <link rel="canonical" href="__PUBLIC_ORIGIN__/" />
+  <link rel="alternate" hreflang="zh-CN" href="__PUBLIC_ORIGIN__/" />
+  <link rel="alternate" hreflang="zh-TW" href="__PUBLIC_ORIGIN__/zh-TW/" />
+  <link rel="alternate" hreflang="en" href="__PUBLIC_ORIGIN__/en/" />
+  <link rel="alternate" hreflang="ja" href="__PUBLIC_ORIGIN__/ja/" />
+  <link rel="alternate" hreflang="es" href="__PUBLIC_ORIGIN__/es/" />
+  <link rel="alternate" hreflang="pt" href="__PUBLIC_ORIGIN__/pt/" />
+  <link rel="alternate" hreflang="ar" href="__PUBLIC_ORIGIN__/ar/" />
+  <link rel="alternate" hreflang="x-default" href="__PUBLIC_ORIGIN__/" />
+<meta property="og:type" content="website" />
   <meta property="og:locale" content="zh_CN" />
-  <meta property="og:url" content="https://chat.ycz.me/" />
+  <meta property="og:url" content="__PUBLIC_ORIGIN__/" />
   <meta property="og:title" content="磁帧鱼-在线智能客服 — Cloudflare 边缘原生客户运营平台" />
   <meta property="og:description" content="在线客服 + AI 知识库 + CRM 销售漏斗 + 多语言 CMS，100% 运行在 Cloudflare 边缘。一行脚本嵌入站点，开窗才建连。" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="磁帧鱼-在线智能客服" />
   <meta name="twitter:description" content="面向独立站、跨境出海与现代团队的在线智能客服与客户运营底座，零服务器运维。" />
-  <link rel="stylesheet" href="/landing.css" />
+  <link rel="stylesheet" href="/index/landing.css" />
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -46,8 +49,8 @@
       {
         "@type": "WebSite",
         "name": "磁帧鱼-在线智能客服",
-        "url": "https://chat.ycz.me/",
-        "inLanguage": ["zh-CN", "zh-TW", "en", "ja"]
+        "url": "__PUBLIC_ORIGIN__/",
+        "inLanguage": ["zh-CN", "zh-TW", "en", "ja", "es", "pt", "ar"]
       },
       {
         "@type": "FAQPage",
@@ -89,11 +92,14 @@
         <span class="brand-mark">磁</span>
         <span>磁帧鱼-在线智能客服</span>
       </a>
-      <nav class="lang-switch" aria-label="语言">
+            <nav class="lang-switch" aria-label="语言">
         <a href="/" aria-current="page">简体</a>
         <a href="/zh-TW/">繁體</a>
         <a href="/en/">EN</a>
         <a href="/ja/">日本語</a>
+        <a href="/es/">ES</a>
+        <a href="/pt/">PT</a>
+        <a href="/ar/">العربية</a>
       </nav>
     </div>
   </header>
@@ -212,9 +218,7 @@
         <p class="section-kicker">极简接入</p>
         <h2 class="section-title">任意站点，一行代码轻松集成</h2>
         <p class="section-desc">将示例中的主机地址替换为您的部署域名。推荐配置 <code>__CF_IM_HOST__</code>，确保跨域嵌入时精准调用 API。</p>
-        <pre class="code-panel"><code>&lt;script&gt;window.__CF_IM_HOST__="https://chat.ycz.me";&lt;/script&gt;
-&lt;link rel="stylesheet" href="https://chat.ycz.me/style.css"&gt;
-&lt;script src="https://chat.ycz.me/widget.js" data-cf-chat-sdk defer&gt;&lt;/script&gt;</code></pre>
+        <pre class="code-panel"><code id="embed-sample"></code></pre>
         <p class="code-note">右下角即可体验实时在线客服挂件。本页面仅供演示参考，正式生产环境可按需移除。</p>
       </div>
     </section>
@@ -230,14 +234,30 @@
 
   <footer class="wrap site-footer">
     <p>© 2026 磁帧鱼-在线智能客服 · 运行于 Cloudflare 全球边缘网络 · 现代企业级客户运营底座</p>
-    <p>
+        <p>
+      <a href="/">简体中文</a> ·
       <a href="/zh-TW/">繁體中文</a> ·
       <a href="/en/">English</a> ·
-      <a href="/ja/">日本語</a>
+      <a href="/ja/">日本語</a> ·
+      <a href="/es/">Español</a> ·
+      <a href="/pt/">Português</a> ·
+      <a href="/ar/">العربية</a>
     </p>
   </footer>
-
+  <script>
+  (function () {
+    var o = window.location.origin;
+    var el = document.getElementById('embed-sample');
+    if (el) {
+      el.textContent =
+        '<script>window.__CF_IM_HOST__="' + o + '";</' + 'script>\n' +
+        '<link rel="stylesheet" href="' + o + '/style.css">\n' +
+        '<script src="' + o + '/widget.js" data-cf-chat-sdk defer></' + 'script>';
+    }
+  })();
+  </script>
   <script>window.__CF_IM_HOST__=window.location.origin;</script>
   <script src="/widget.js" defer></script>
 </body>
+
 </html>

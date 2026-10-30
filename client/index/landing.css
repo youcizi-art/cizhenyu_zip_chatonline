@@ -230,3 +230,11 @@ section.block:nth-child(even) { background: #eef2f8; }
   justify-content: space-between; align-items: center;
 }
 .site-footer a:hover { color: var(--accent-deep); }
+
+/* Arabic / RTL */
+html[dir="rtl"] body { direction: rtl; }
+html[dir="rtl"] .hero-grid,
+html[dir="rtl"] .top-inner,
+html[dir="rtl"] .site-footer { direction: rtl; }
+html[dir="rtl"] .lang-switch { flex-direction: row-reverse; flex-wrap: wrap; }
+html[dir="rtl"] .code-panel { direction: ltr; text-align: left; }

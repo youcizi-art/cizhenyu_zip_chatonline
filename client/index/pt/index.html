@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CIZHENYU — Chat ao vivo com IA e operações de clientes no Edge da Cloudflare</title>
+  <meta name="description" content="CIZHENYU é uma plataforma de operações de clientes na Cloudflare Edge: chat ao vivo, respostas RAG com IA, funis de CRM e formulários multilíngues. Sem servidores próprios." />
+  <meta name="keywords" content="CIZHENYU, live chat, AI customer service, Cloudflare Workers, Durable Objects, D1, R2, Workers AI, CRM, CMS, RAG, edge computing, chat widget" />
+  <meta name="robots" content="index, follow" />
+  <meta name="author" content="CIZHENYU" />
+  <link rel="canonical" href="__PUBLIC_ORIGIN__/pt/" />
+  <link rel="alternate" hreflang="zh-CN" href="__PUBLIC_ORIGIN__/" />
+  <link rel="alternate" hreflang="zh-TW" href="__PUBLIC_ORIGIN__/zh-TW/" />
+  <link rel="alternate" hreflang="en" href="__PUBLIC_ORIGIN__/en/" />
+  <link rel="alternate" hreflang="ja" href="__PUBLIC_ORIGIN__/ja/" />
+  <link rel="alternate" hreflang="es" href="__PUBLIC_ORIGIN__/es/" />
+  <link rel="alternate" hreflang="pt" href="__PUBLIC_ORIGIN__/pt/" />
+  <link rel="alternate" hreflang="ar" href="__PUBLIC_ORIGIN__/ar/" />
+  <link rel="alternate" hreflang="x-default" href="__PUBLIC_ORIGIN__/" />
+<meta property="og:type" content="website" />
+  <meta property="og:locale" content="pt_BR" />
+  <meta property="og:url" content="__PUBLIC_ORIGIN__/pt/" />
+  <meta property="og:title" content="CIZHENYU — Chat com IA nativo na Cloudflare Edge" />
+  <meta property="og:description" content="Chat ao vivo + base de conhecimento IA + CRM + CMS multilíngue na Cloudflare Edge. Um script, conexão sob demanda." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="CIZHENYU na Cloudflare Edge" />
+  <meta name="twitter:description" content="Chat inteligente, CRM e suporte RAG para equipes globais—sem servidores próprios." />
+  <link rel="stylesheet" href="/index/landing.css" />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "SoftwareApplication",
+        "name": "CIZHENYU",
+        "applicationCategory": "BusinessApplication",
+        "operatingSystem": "Cloudflare Edge / Modern Browsers",
+        "description": "Edge-native live chat, CRM, CMS and knowledge-base platform built on Cloudflare Workers, Durable Objects, D1, R2 and Workers AI.",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "featureList": [
+          "Embeddable realtime live-chat widget",
+          "Agent inbox with assignment",
+          "CRM profiles and sales funnel",
+          "Forms and multilingual CMS",
+          "Knowledge-base RAG auto replies",
+          "WebSocket only after visitor opens chat"
+        ]
+      },
+      {
+        "@type": "WebSite",
+        "name": "CIZHENYU",
+        "url": "__PUBLIC_ORIGIN__/en/",
+        "inLanguage": ["zh-CN", "zh-TW", "en", "ja", "es", "pt", "ar"]
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Do I need my own servers?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. CIZHENYU runs 100% serverless on Cloudflare Workers, Durable Objects, D1, R2, Vectorize and Workers AI—no traditional VMs, databases, or message queues to manage."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does every page view open an expensive WebSocket?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. Page load only fetches lightweight greetings and badges. A live conversation and WebSocket connection are established only when the visitor explicitly opens the chat window or triggers a chat action."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can I remove this landing page in production?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. This landing page is designed for developer onboarding and demonstrations. Deleting this page will make / return 404 without impacting the live chat widget SDK, backend APIs, or admin console."
+            }
+          }
+        ]
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-inner">
+      <a class="brand" href="/pt/">
+        <span class="brand-mark">CZ</span>
+        <span>CIZHENYU</span>
+      </a>
+            <nav class="lang-switch" aria-label="Idioma">
+        <a href="/">简体</a>
+        <a href="/zh-TW/">繁體</a>
+        <a href="/en/">EN</a>
+        <a href="/ja/">日本語</a>
+        <a href="/es/">ES</a>
+        <a href="/pt/" aria-current="page">PT</a>
+        <a href="/ar/">العربية</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="wrap hero-grid">
+        <div>
+          <p class="eyebrow"><i></i> Nativo na Cloudflare Edge · Operações modernas de clientes</p>
+          <h1>Engaje cada visitante. Acelere cada conversão.</h1>
+          <p class="hero-lead">
+            CIZHENYU é uma plataforma leve de operações de clientes no Edge, feita para sites modernos, e-commerce internacional e equipes em crescimento: chat ao vivo, base de conhecimento com IA (RAG), funil de CRM e captura multilíngue—100% na Cloudflare Edge, sem servidores próprios.
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="#embed">Ver integração em uma linha</a>
+            <a class="btn btn-ghost" href="#pain">Ver pontos de dor</a>
+          </div>
+        </div>
+        <aside class="hero-aside" aria-label="Architecture Stack">
+          <h2>Why Edge Architecture</h2>
+          <ul class="stack-list">
+            <li>Workers + Durable Objects: On-demand stateful messaging with hibernation when idle</li>
+            <li>D1 + R2: Chat histories and media stored at the edge with ultra-low latency</li>
+            <li>Workers AI + Vectorize: 24/7 AI knowledge RAG for instant and accurate answers</li>
+            <li>One script to embed; dynamic secret admin paths + Turnstile bot protection</li>
+          </ul>
+        </aside>
+      </div>
+    </section>
+
+    <section class="block" id="pain">
+      <div class="wrap">
+        <p class="section-kicker">Core Challenges</p>
+        <h2 class="section-title">Fragmented SaaS & Runaway Server Costs Are Hurting Your Margins</h2>
+        <p class="section-desc">Tool silos prevent lead follow-through, while always-on WebSocket connections silently inflate bills before visitors even ask a question.</p>
+        <div class="pain-grid">
+          <article class="item">
+            <h3>Tool Sprawl & Data Silos</h3>
+            <p>Live chat, CRM, and lead capture operate in disconnected silos. High-value leads vanish in conversation logs, requiring tedious manual copy-pasting.</p>
+          </article>
+          <article class="item">
+            <h3>Idle Connection Taxes</h3>
+            <p>Most chat solutions open WebSockets immediately upon page load. As daily UV surges, idle connections drain bandwidth quotas and inflate server bills.</p>
+          </article>
+          <article class="item">
+            <h3>DevOps Burden & Latency</h3>
+            <p>Self-hosting message queues, databases, and auth requires dedicated engineering time. Global visitors suffer from sluggish round-trips to distant origin servers.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="solution">
+      <div class="wrap">
+        <p class="section-kicker">Solution</p>
+        <h2 class="section-title">Full-Funnel Customer Operations on a Single Edge Network</h2>
+        <p class="section-desc">CIZHENYU unifies real-time messaging, AI automation, CRM pipelines, and lead forms into a single edge deployment unit—slashing overhead and complexity.</p>
+        <div class="feature-grid">
+          <article class="item">
+            <h3>Connect Only on Engagement</h3>
+            <p>Initial load delivers static greetings and badges in milliseconds. WebSocket connections initiate only when visitors open the chat window. Multi-tab sessions sync in real time.</p>
+          </article>
+          <article class="item">
+            <h3>Agent Inbox & CRM Funnel</h3>
+            <p>Real-time customer lists, intent tags, unread alerts, and one-click conversion into CRM customer profiles. Structured pipeline stages turn conversations into closed deals.</p>
+          </article>
+          <article class="item">
+            <h3>AI Knowledge Base (RAG)</h3>
+            <p>Powered by Cloudflare Vectorize and Workers AI: provide instant, accurate responses when agents are offline or off-duty, with smooth escalation to human teams.</p>
+          </article>
+          <article class="item">
+            <h3>Dynamic Forms · CMS · i18n</h3>
+            <p>Embed custom lead-generation forms on any landing page; publish multilingual content. The chat widget automatically adapts to the visitor's preferred language.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="trust">
+      <div class="wrap">
+        <p class="section-kicker">Enterprise Security</p>
+        <h2 class="section-title">Engineered for Production & Multi-Tenant Delivery</h2>
+        <p class="section-desc">Built for reliable enterprise deployments with multi-layer defense against unauthorized scanning, credential stuffing, and data leaks.</p>
+        <div class="trust-grid">
+          <article class="item"><h3>Dynamic Secret Admin URL</h3><p>Unauthorized probes to <code>/admin</code> receive a clean 404 disguise.</p></article>
+          <article class="item"><h3>Turnstile & Passcode Defense</h3><p>Logins combine Cloudflare bot detection with environment security codes.</p></article>
+          <article class="item"><h3>Media & Privacy Purge</h3><p>Deleting chat sessions cascades to remove associated R2 media and reset visitor identities.</p></article>
+          <article class="item"><h3>Decoupled Deployment</h3><p>This demo landing page can be deleted anytime without affecting live widgets or backend APIs.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="how">
+      <div class="wrap">
+        <p class="section-kicker">Workflow</p>
+        <h2 class="section-title">Go Live in Three Simple Steps</h2>
+        <div class="steps">
+          <article class="step">
+            <h3>Deploy to Cloudflare</h3>
+            <p>Connect Workers, D1, R2, and Durable Objects; enable Vectorize and Workers AI as required.</p>
+          </article>
+          <article class="step">
+            <h3>Configure Brand & Policies</h3>
+            <p>Customize brand colors, multilingual welcome messages, agent accounts, and AI response policies.</p>
+          </article>
+          <article class="step">
+            <h3>Embed One Script Line</h3>
+            <p>Add the lightweight SDK to your site to immediately start engaging visitors and capturing leads.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="embed">
+      <div class="wrap">
+        <p class="section-kicker">Quick Embed</p>
+        <h2 class="section-title">Integre em qualquer site em segundos</h2>
+        <p class="section-desc">Replace the domain with your Worker origin. Define <code>__CF_IM_HOST__</code> to ensure cross-origin embeds route accurately to your endpoints.</p>
+        <pre class="code-panel"><code id="embed-sample"></code></pre>
+        <p class="code-note">Teste o widget no canto inferior direito. Esta página é uma demo e pode ser removida em produção.</p>
+      </div>
+    </section>
+
+    <div class="wrap">
+      <section class="cta-band" aria-label="Call to Action">
+        <h2>Eleve o suporte global. Impulse o funil de vendas.</h2>
+        <p>From the very first instant response to CRM lead follow-through and RAG automation—experience next-generation customer engagement on Cloudflare Edge.</p>
+        <a class="btn btn-primary" href="#embed">Obter o código</a>
+      </section>
+    </div>
+  </main>
+
+  <footer class="wrap site-footer">
+    <p>© 2026 CIZHENYU · Cloudflare Edge · Operações modernas de clientes</p>
+        <p>
+      <a href="/">简体中文</a> ·
+      <a href="/zh-TW/">繁體中文</a> ·
+      <a href="/en/">English</a> ·
+      <a href="/ja/">日本語</a> ·
+      <a href="/es/">Español</a> ·
+      <a href="/pt/">Português</a> ·
+      <a href="/ar/">العربية</a>
+    </p>
+  </footer>
+  <script>
+  (function () {
+    var o = window.location.origin;
+    var el = document.getElementById('embed-sample');
+    if (el) {
+      el.textContent =
+        '<script>window.__CF_IM_HOST__="' + o + '";</' + 'script>\n' +
+        '<link rel="stylesheet" href="' + o + '/style.css">\n' +
+        '<script src="' + o + '/widget.js" data-cf-chat-sdk defer></' + 'script>';
+    }
+  })();
+  </script>
+  <script>window.__CF_IM_HOST__=window.location.origin;</script>
+  <script src="/widget.js" defer></script>
+</body>
+
+</html>
