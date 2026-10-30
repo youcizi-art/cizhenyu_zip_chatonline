@@ -6677,7 +6677,7 @@ chatRouter.get("/widget/config", async (c) => {
     if (!widget_items_json)
       widget_items_json = DEFAULT_WIDGET_ITEMS_JSON;
     const ga_enabled = settingsMap.ga_enabled === "1";
-    const ga_measurement_id = settingsMap.ga_measurement_id || "";
+    const ga_measurement_id = (settingsMap.ga_measurement_id || "").trim() || (c.env.GA_MEASUREMENT_ID || "").trim();
     const langs = await getLanguages(c.env.DB);
     const welcome_messages = {};
     for (const lang of langs) {
@@ -10170,8 +10170,11 @@ init_performance2();
 init_settings();
 var GA_REFRESH_KEY = "ga_oauth_refresh_token";
 var GA_ACCESS_CACHE_KEY = "ga_oauth_access_cache";
+var GA_SA_ACCESS_CACHE_KEY = "ga_sa_access_cache";
 var GA_CLIENT_ID_KEY = "ga_oauth_client_id";
 var GA_CLIENT_SECRET_KEY = "ga_oauth_client_secret";
+var GA_READONLY_SCOPE = "https://www.googleapis.com/auth/analytics.readonly";
+var GA_TOKEN_URL = "https://oauth2.googleapis.com/token";
 async function resolveGaOAuthCreds(env2, db) {
   const fromDbId = (await getSystemSetting(db, GA_CLIENT_ID_KEY) || "").trim();
   const fromDbSecret = (await getSystemSetting(db, GA_CLIENT_SECRET_KEY) || "").trim();
@@ -10185,6 +10188,27 @@ async function gaOAuthConfigured(env2, db) {
   return Boolean(c.clientId && c.clientSecret);
 }
 __name(gaOAuthConfigured, "gaOAuthConfigured");
+function hasGaServiceAccount(env2) {
+  return Boolean((env2.GA_CLIENT_EMAIL || "").trim() && (env2.GA_PRIVATE_KEY || "").trim());
+}
+__name(hasGaServiceAccount, "hasGaServiceAccount");
+function defaultGaPropertyId(env2) {
+  return (env2.GA4_PROPERTY_ID || "").replace(/^properties\//, "").trim();
+}
+__name(defaultGaPropertyId, "defaultGaPropertyId");
+function defaultGaMeasurementId(env2) {
+  return (env2.GA_MEASUREMENT_ID || "").trim();
+}
+__name(defaultGaMeasurementId, "defaultGaMeasurementId");
+async function resolveGaAuthMode(env2, db) {
+  if (hasGaServiceAccount(env2))
+    return "service_account";
+  const refresh = await getSystemSetting(db, GA_REFRESH_KEY);
+  if (refresh)
+    return "oauth";
+  return "none";
+}
+__name(resolveGaAuthMode, "resolveGaAuthMode");
 function buildGaAuthUrl(creds, redirectUri, state) {
   const params = new URLSearchParams({
     client_id: creds.clientId,
@@ -10192,11 +10216,7 @@ function buildGaAuthUrl(creds, redirectUri, state) {
     response_type: "code",
     access_type: "offline",
     prompt: "consent",
-    scope: [
-      "https://www.googleapis.com/auth/analytics.readonly",
-      "openid",
-      "email"
-    ].join(" "),
+    scope: [GA_READONLY_SCOPE, "openid", "email"].join(" "),
     state
   });
   return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
@@ -10210,7 +10230,7 @@ async function exchangeGaCode(creds, code, redirectUri) {
     redirect_uri: redirectUri,
     grant_type: "authorization_code"
   });
-  const res = await fetch("https://oauth2.googleapis.com/token", {
+  const res = await fetch(GA_TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body
@@ -10238,7 +10258,102 @@ async function exchangeGaCode(creds, code, redirectUri) {
   };
 }
 __name(exchangeGaCode, "exchangeGaCode");
-async function refreshAccessToken(env2, db) {
+function b64urlJson2(obj) {
+  return b64urlBytes(new TextEncoder().encode(JSON.stringify(obj)));
+}
+__name(b64urlJson2, "b64urlJson");
+function b64urlBytes(bytes) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let bin = "";
+  for (let i = 0; i < u8.length; i++)
+    bin += String.fromCharCode(u8[i]);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+__name(b64urlBytes, "b64urlBytes");
+function normalizePemPrivateKey(pem) {
+  return pem.trim().replace(/^["']|["']$/g, "").replace(/\\n/g, "\n");
+}
+__name(normalizePemPrivateKey, "normalizePemPrivateKey");
+function pemToArrayBuffer(pem) {
+  const normalized = normalizePemPrivateKey(pem);
+  const lines = normalized.replace(/-----BEGIN [^-]+-----/g, "").replace(/-----END [^-]+-----/g, "").replace(/\s+/g, "");
+  const raw2 = atob(lines);
+  const buf = new Uint8Array(raw2.length);
+  for (let i = 0; i < raw2.length; i++)
+    buf[i] = raw2.charCodeAt(i);
+  return buf.buffer;
+}
+__name(pemToArrayBuffer, "pemToArrayBuffer");
+async function importSaPrivateKey(pem) {
+  return crypto.subtle.importKey(
+    "pkcs8",
+    pemToArrayBuffer(pem),
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+}
+__name(importSaPrivateKey, "importSaPrivateKey");
+async function getGoogleAccessToken(clientEmail, privateKeyPEM) {
+  const email = clientEmail.trim();
+  const pem = normalizePemPrivateKey(privateKeyPEM);
+  if (!email || !pem)
+    throw new Error("GA service account credentials are incomplete");
+  const now = Math.floor(Date.now() / 1e3);
+  const header = { alg: "RS256", typ: "JWT" };
+  const claim = {
+    iss: email,
+    scope: GA_READONLY_SCOPE,
+    aud: GA_TOKEN_URL,
+    iat: now,
+    exp: now + 3600
+  };
+  const unsigned = `${b64urlJson2(header)}.${b64urlJson2(claim)}`;
+  const key = await importSaPrivateKey(pem);
+  const sig = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    key,
+    new TextEncoder().encode(unsigned)
+  );
+  const jwt = `${unsigned}.${b64urlBytes(sig)}`;
+  const body = new URLSearchParams({
+    grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    assertion: jwt
+  });
+  const res = await fetch(GA_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body
+  });
+  const json = await res.json();
+  if (!res.ok || !json.access_token) {
+    throw new Error(json.error_description || json.error || "Service account token exchange failed");
+  }
+  return json.access_token;
+}
+__name(getGoogleAccessToken, "getGoogleAccessToken");
+async function getSaAccessToken(env2, db) {
+  const cachedRaw = await getSystemSetting(db, GA_SA_ACCESS_CACHE_KEY);
+  if (cachedRaw) {
+    try {
+      const cached = JSON.parse(cachedRaw);
+      if (cached.access_token && cached.exp && cached.exp > Date.now() + 6e4) {
+        return cached.access_token;
+      }
+    } catch {
+    }
+  }
+  const email = (env2.GA_CLIENT_EMAIL || "").trim();
+  const pem = env2.GA_PRIVATE_KEY || "";
+  const access = await getGoogleAccessToken(email, pem);
+  const exp = Date.now() + 3500 * 1e3;
+  await updateSystemSettings(db, {
+    [GA_SA_ACCESS_CACHE_KEY]: JSON.stringify({ access_token: access, exp })
+  });
+  return access;
+}
+__name(getSaAccessToken, "getSaAccessToken");
+async function refreshOAuthAccessToken(env2, db) {
   const refresh = await getSystemSetting(db, GA_REFRESH_KEY);
   if (!refresh)
     throw new Error("Google account not connected");
@@ -10262,7 +10377,7 @@ async function refreshAccessToken(env2, db) {
     refresh_token: refresh,
     grant_type: "refresh_token"
   });
-  const res = await fetch("https://oauth2.googleapis.com/token", {
+  const res = await fetch(GA_TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body
@@ -10278,11 +10393,18 @@ async function refreshAccessToken(env2, db) {
   });
   return access;
 }
-__name(refreshAccessToken, "refreshAccessToken");
+__name(refreshOAuthAccessToken, "refreshOAuthAccessToken");
+async function resolveGaAccessToken(env2, db) {
+  if (hasGaServiceAccount(env2))
+    return getSaAccessToken(env2, db);
+  return refreshOAuthAccessToken(env2, db);
+}
+__name(resolveGaAccessToken, "resolveGaAccessToken");
 async function disconnectGa(db) {
   await updateSystemSettings(db, {
     [GA_REFRESH_KEY]: "",
     [GA_ACCESS_CACHE_KEY]: "",
+    [GA_SA_ACCESS_CACHE_KEY]: "",
     ga_connected_email: "",
     ga_property_id: "",
     ga_report_enabled: "0"
@@ -10290,7 +10412,7 @@ async function disconnectGa(db) {
 }
 __name(disconnectGa, "disconnectGa");
 async function listGaProperties(env2, db) {
-  const token = await refreshAccessToken(env2, db);
+  const token = await resolveGaAccessToken(env2, db);
   const res = await fetch(
     "https://analyticsadmin.googleapis.com/v1beta/accountSummaries?pageSize=200",
     { headers: { Authorization: `Bearer ${token}` } }
@@ -10321,12 +10443,11 @@ function propertyResource(propertyId) {
   return `properties/${id}`;
 }
 __name(propertyResource, "propertyResource");
-async function runGaReport(env2, db, opts) {
-  const token = await refreshAccessToken(env2, db);
-  const days = Math.min(90, Math.max(1, opts.rangeDays || 7));
-  const dateRanges = [{ startDate: `${days}daysAgo`, endDate: "yesterday" }];
-  const host = (opts.hostName || "").trim().toLowerCase().replace(/^www\./, "");
-  const dimensionFilter = host ? {
+function buildHostFilter(hostName) {
+  const host = (hostName || "").trim().toLowerCase().replace(/^www\./, "");
+  if (!host)
+    return void 0;
+  return {
     filter: {
       fieldName: "hostName",
       stringFilter: {
@@ -10335,7 +10456,14 @@ async function runGaReport(env2, db, opts) {
         caseSensitive: false
       }
     }
-  } : void 0;
+  };
+}
+__name(buildHostFilter, "buildHostFilter");
+async function runGaReport(env2, db, opts) {
+  const token = await resolveGaAccessToken(env2, db);
+  const days = Math.min(90, Math.max(1, opts.rangeDays || 7));
+  const dateRanges = [{ startDate: `${days}daysAgo`, endDate: "yesterday" }];
+  const dimensionFilter = buildHostFilter(opts.hostName);
   let body;
   if (opts.kind === "overview") {
     body = {
@@ -10346,6 +10474,19 @@ async function runGaReport(env2, db, opts) {
         { name: "screenPageViews" },
         { name: "eventCount" }
       ],
+      ...dimensionFilter ? { dimensionFilter } : {},
+      returnPropertyQuota: true
+    };
+  } else if (opts.kind === "trend") {
+    body = {
+      dateRanges,
+      dimensions: [{ name: "date" }],
+      metrics: [
+        { name: "activeUsers" },
+        { name: "sessions" },
+        { name: "screenPageViews" }
+      ],
+      orderBys: [{ dimension: { dimensionName: "date" }, desc: false }],
       ...dimensionFilter ? { dimensionFilter } : {},
       returnPropertyQuota: true
     };
@@ -10391,8 +10532,44 @@ async function runGaReport(env2, db, opts) {
   return json;
 }
 __name(runGaReport, "runGaReport");
+async function runGaHostsOverview(env2, db, opts) {
+  const token = await resolveGaAccessToken(env2, db);
+  const days = Math.min(90, Math.max(1, opts.rangeDays || 7));
+  const body = {
+    dateRanges: [{ startDate: `${days}daysAgo`, endDate: "yesterday" }],
+    dimensions: [{ name: "hostName" }],
+    metrics: [{ name: "activeUsers" }, { name: "sessions" }, { name: "screenPageViews" }],
+    orderBys: [{ metric: { metricName: "activeUsers" }, desc: true }],
+    limit: 100,
+    returnPropertyQuota: true
+  };
+  const res = await fetch(
+    `https://analyticsdata.googleapis.com/v1beta/${propertyResource(opts.propertyId)}:runReport`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    }
+  );
+  const json = await res.json();
+  if (!res.ok) {
+    const msg = json.error?.message || "GA hosts overview failed";
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
+  }
+  return json;
+}
+__name(runGaHostsOverview, "runGaHostsOverview");
 
 // src/worker/routes/analytics.ts
+function resolvePropertyId(env2, siteMap) {
+  return (siteMap?.ga_property_id || defaultGaPropertyId(env2) || "").replace(/^properties\//, "").trim();
+}
+__name(resolvePropertyId, "resolvePropertyId");
 var analyticsRouter = new Hono2();
 function readSiteId4(c, body) {
   return (c.req.query("site_id") || "").trim() || (c.req.header("X-Site-Id") || "").trim() || (typeof body?.site_id === "string" ? body.site_id.trim() : "");
@@ -10423,28 +10600,37 @@ analyticsRouter.get("/analytics/ga/status", async (c) => {
     const refresh = await getSystemSetting(c.env.DB, GA_REFRESH_KEY);
     const email = await getSystemSetting(c.env.DB, "ga_connected_email") || "";
     const oauthOk = await gaOAuthConfigured(c.env, c.env.DB);
+    const saReady = hasGaServiceAccount(c.env);
+    const authMode = await resolveGaAuthMode(c.env, c.env.DB);
     let propertyId = "";
     let reportEnabled = false;
     let eventEnabled = false;
     let measurementId = "";
     if (siteId) {
       const siteMap = await getMergedSiteSettings(c.env.DB, siteId);
-      propertyId = siteMap.ga_property_id || "";
-      reportEnabled = siteMap.ga_report_enabled === "1";
+      propertyId = resolvePropertyId(c.env, siteMap);
+      reportEnabled = siteMap.ga_report_enabled === "1" || saReady;
       eventEnabled = siteMap.ga_enabled === "1";
-      measurementId = siteMap.ga_measurement_id || "";
+      measurementId = siteMap.ga_measurement_id || defaultGaMeasurementId(c.env);
+    } else {
+      propertyId = defaultGaPropertyId(c.env);
+      measurementId = defaultGaMeasurementId(c.env);
     }
     return c.json({
       success: true,
       data: {
+        auth_mode: authMode,
+        service_account_ready: saReady,
         oauth_configured: oauthOk,
-        connected: Boolean(refresh),
-        email,
+        connected: saReady || Boolean(refresh),
+        email: saReady ? (c.env.GA_CLIENT_EMAIL || "").trim() : email,
         site_id: siteId || "",
         property_id: propertyId,
+        default_property_id: defaultGaPropertyId(c.env),
         report_enabled: reportEnabled,
         event_enabled: eventEnabled,
-        measurement_id: measurementId
+        measurement_id: measurementId,
+        default_measurement_id: defaultGaMeasurementId(c.env)
       }
     });
   } catch (err) {
@@ -10538,7 +10724,17 @@ analyticsRouter.get("/analytics/ga/properties", async (c) => {
     const admin = await requireAdmin(c);
     if (isErrorResponse(admin))
       return admin;
-    if (!await gaOAuthConfigured(c.env, c.env.DB)) {
+    const mode = await resolveGaAuthMode(c.env, c.env.DB);
+    if (mode === "none") {
+      return c.json(
+        {
+          success: false,
+          message: "Configure GA service account secrets, or save Google Client ID/secret and connect OAuth first"
+        },
+        400
+      );
+    }
+    if (mode === "oauth" && !await gaOAuthConfigured(c.env, c.env.DB)) {
       return c.json({ success: false, message: "Save Google Client ID and secret first" }, 400);
     }
     const list = await listGaProperties(c.env, c.env.DB);
@@ -10588,19 +10784,26 @@ analyticsRouter.get("/analytics/ga/report", async (c) => {
       return c.json({ success: false, message: "No permission to access this site" }, 403);
     }
     const siteMap = await getMergedSiteSettings(c.env.DB, siteId);
-    if (siteMap.ga_report_enabled !== "1") {
+    const saReady = hasGaServiceAccount(c.env);
+    if (siteMap.ga_report_enabled !== "1" && !saReady) {
       return c.json({ success: false, message: "GA reporting disabled for this site" }, 400);
     }
-    const propertyId = siteMap.ga_property_id || "";
+    const propertyId = resolvePropertyId(c.env, siteMap);
     if (!propertyId) {
-      return c.json({ success: false, message: "Select a GA4 property for this site first" }, 400);
+      return c.json(
+        {
+          success: false,
+          message: "Select a GA4 property for this site, or set GA4_PROPERTY_ID secret"
+        },
+        400
+      );
     }
     const kind = c.req.query("kind") || "overview";
-    if (!["overview", "sources", "pages"].includes(kind)) {
+    if (!["overview", "sources", "pages", "trend"].includes(kind)) {
       return c.json({ success: false, message: "Invalid report type" }, 400);
     }
     const days = Number(c.req.query("days") || "7");
-    const site = (c.req.query("site") || "").trim().toLowerCase().replace(/^www\./, "");
+    const site = (c.req.query("domain") || c.req.query("site") || "").trim().toLowerCase().replace(/^www\./, "");
     const cacheKey = new Request(
       `https://ga-cache.internal/${siteId}/${propertyId}/${kind}/${days}/${site || "all"}`
     );
@@ -10636,6 +10839,14 @@ analyticsRouter.get("/analytics/ga/report", async (c) => {
         eventCount: map.eventCount || 0,
         quota: raw2.propertyQuota || null
       };
+    } else if (kind === "trend") {
+      const rows = (raw2.rows || []).map((r) => ({
+        date: r.dimensionValues?.[0]?.value || "",
+        activeUsers: Number(r.metricValues?.[0]?.value || 0),
+        sessions: Number(r.metricValues?.[1]?.value || 0),
+        screenPageViews: Number(r.metricValues?.[2]?.value || 0)
+      }));
+      data = { kind, days, site: site || "", rows, quota: raw2.propertyQuota || null };
     } else {
       const rows = (raw2.rows || []).map((r) => ({
         name: r.dimensionValues?.[0]?.value || "",
@@ -10662,6 +10873,84 @@ analyticsRouter.get("/analytics/ga/report", async (c) => {
     return c.json({ success: false, message: err.message || "GA report failed" }, status);
   }
 });
+async function handleGaHostsOverview(c) {
+  try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
+    const siteId = readSiteId4(c);
+    let propertyId = defaultGaPropertyId(c.env);
+    if (siteId) {
+      if (!await agentCanAccessSite(c.env.DB, agent, siteId)) {
+        return c.json({ success: false, message: "No permission to access this site" }, 403);
+      }
+      const siteMap = await getMergedSiteSettings(c.env.DB, siteId);
+      propertyId = resolvePropertyId(c.env, siteMap);
+      const saReady = hasGaServiceAccount(c.env);
+      if (siteMap.ga_report_enabled !== "1" && !saReady) {
+        return c.json({ success: false, message: "GA reporting disabled for this site" }, 400);
+      }
+    }
+    if (!propertyId) {
+      return c.json(
+        {
+          success: false,
+          message: "Set GA4_PROPERTY_ID secret or bind a GA4 property on a site first"
+        },
+        400
+      );
+    }
+    const mode = await resolveGaAuthMode(c.env, c.env.DB);
+    if (mode === "none") {
+      return c.json(
+        { success: false, message: "Configure GA service account secrets or connect Google OAuth" },
+        400
+      );
+    }
+    const days = Number(c.req.query("days") || "7");
+    const cacheKey = new Request(`https://ga-cache.internal/hosts/${propertyId}/${days}`);
+    try {
+      const hit = await caches.default.match(cacheKey);
+      if (hit) {
+        const cached = await hit.json();
+        return c.json({ success: true, data: cached, cached: true });
+      }
+    } catch {
+    }
+    const raw2 = await runGaHostsOverview(c.env, c.env.DB, { propertyId, rangeDays: days });
+    const rows = (raw2.rows || []).map((r) => ({
+      hostName: r.dimensionValues?.[0]?.value || "",
+      activeUsers: Number(r.metricValues?.[0]?.value || 0),
+      sessions: Number(r.metricValues?.[1]?.value || 0),
+      screenPageViews: Number(r.metricValues?.[2]?.value || 0)
+    }));
+    const data = {
+      days,
+      property_id: propertyId,
+      rows,
+      quota: raw2.propertyQuota || null
+    };
+    try {
+      await caches.default.put(
+        cacheKey,
+        new Response(JSON.stringify(data), {
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "max-age=600"
+          }
+        })
+      );
+    } catch {
+    }
+    return c.json({ success: true, data, cached: false });
+  } catch (err) {
+    const status = err.status === 429 ? 429 : 500;
+    return c.json({ success: false, message: err.message || "GA hosts overview failed" }, status);
+  }
+}
+__name(handleGaHostsOverview, "handleGaHostsOverview");
+analyticsRouter.get("/analytics/ga/hosts", handleGaHostsOverview);
+analyticsRouter.get("/analytics/ga/overview", handleGaHostsOverview);
 
 // src/worker/routes/sites.ts
 init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
