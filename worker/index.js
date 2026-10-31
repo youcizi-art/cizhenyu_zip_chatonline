@@ -1466,6 +1466,7 @@ var init_defaultWidgetItems = __esm({
 // src/worker/db/sites.ts
 var sites_exports = {};
 __export(sites_exports, {
+  GA_SHARED_SETTING_KEYS: () => GA_SHARED_SETTING_KEYS,
   SITE_SETTING_KEYS: () => SITE_SETTING_KEYS,
   agentCanAccessSite: () => agentCanAccessSite,
   createSite: () => createSite,
@@ -1747,7 +1748,19 @@ async function getMergedSiteSettings(db, siteId) {
   const site = await getSiteSettingsMap(db, siteId);
   const merged = { ...global };
   for (const [k, v] of Object.entries(site)) {
+    if (GA_SHARED_KEY_SET.has(k))
+      continue;
     merged[k] = v;
+  }
+  for (const k of GA_SHARED_SETTING_KEYS) {
+    const g = (global[k] || "").trim();
+    const s = (site[k] || "").trim();
+    if (g)
+      merged[k] = g;
+    else if (s)
+      merged[k] = s;
+    else if (merged[k] !== void 0 && !(merged[k] || "").trim())
+      delete merged[k];
   }
   return merged;
 }
@@ -1811,7 +1824,7 @@ async function resolveSiteForVisitor(db, req, opts) {
   }
   return null;
 }
-var SITE_SETTING_KEYS, SITE_SETTING_KEY_SET;
+var SITE_SETTING_KEYS, GA_SHARED_SETTING_KEYS, SITE_SETTING_KEY_SET, GA_SHARED_KEY_SET;
 var init_sites = __esm({
   "src/worker/db/sites.ts"() {
     "use strict";
@@ -1830,16 +1843,22 @@ var init_sites = __esm({
       "welcome_message",
       "offline_message",
       "auto_reply_enabled",
-      "ga_enabled",
-      "ga_measurement_id",
-      "ga_property_id",
-      "ga_report_enabled",
       "ai_reply_strategy",
       "ai_system_prompt",
       "ai_model_pool",
       "ai_ticket_auto_reply"
     ];
+    GA_SHARED_SETTING_KEYS = [
+      "ga_enabled",
+      "ga_measurement_id",
+      "ga_property_id",
+      "ga_report_enabled",
+      "ga_oauth_client_id",
+      "ga_oauth_client_secret",
+      "ga_connected_email"
+    ];
     SITE_SETTING_KEY_SET = new Set(SITE_SETTING_KEYS);
+    GA_SHARED_KEY_SET = new Set(GA_SHARED_SETTING_KEYS);
     __name(isSiteSettingKey, "isSiteSettingKey");
     __name(normalizeHost, "normalizeHost");
     __name(hostFromRequest, "hostFromRequest");
@@ -2742,6 +2761,30 @@ async function getAiConfigValue(env2, key, siteId) {
   }
   return getSystemSetting(env2.DB, key);
 }
+function normalizeEmbeddingVectors(raw2) {
+  if (!raw2)
+    return [];
+  const root = raw2;
+  const data = root.data ?? root;
+  if (!Array.isArray(data) || data.length === 0)
+    return [];
+  if (typeof data[0] === "number")
+    return [data];
+  if (Array.isArray(data[0]))
+    return data;
+  if (data[0] && typeof data[0] === "object") {
+    return data.map((row) => {
+      if (Array.isArray(row))
+        return row;
+      if (Array.isArray(row?.embedding))
+        return row.embedding;
+      if (Array.isArray(row?.values))
+        return row.values;
+      return null;
+    }).filter((v) => Array.isArray(v) && v.length > 0);
+  }
+  return [];
+}
 function resolveCfModelId(model) {
   const raw2 = (model || "").trim();
   if (!raw2)
@@ -2826,21 +2869,32 @@ async function indexDocument(env2, doc) {
     });
     if (env2.AI && env2.VECTORIZE_INDEX) {
       const chunkTexts = kbChunks.map((c) => c.content);
-      const embedRes = await env2.AI.run(EMBEDDING_MODEL, { text: chunkTexts });
-      const vectorsData = embedRes.data || embedRes;
-      if (vectorsData && Array.isArray(vectorsData)) {
-        const vectorizeRecords = kbChunks.map((chunk, idx) => ({
-          id: chunk.vector_id,
-          values: vectorsData[idx],
-          metadata: {
-            document_id: doc.id,
-            domain: doc.domain,
-            rel_product_id: doc.rel_product_id || "",
-            title: doc.title,
-            site_id: doc.site_id || ""
+      try {
+        const embedRes = await env2.AI.run(EMBEDDING_MODEL, { text: chunkTexts });
+        const vectorsData = normalizeEmbeddingVectors(embedRes);
+        if (vectorsData.length > 0) {
+          const vectorizeRecords = kbChunks.map((chunk, idx) => {
+            const values = vectorsData[idx];
+            if (!values || values.length === 0)
+              return null;
+            return {
+              id: chunk.vector_id,
+              values,
+              metadata: {
+                document_id: doc.id,
+                domain: doc.domain,
+                rel_product_id: doc.rel_product_id || "",
+                title: doc.title,
+                site_id: doc.site_id || ""
+              }
+            };
+          }).filter(Boolean);
+          if (vectorizeRecords.length > 0) {
+            await env2.VECTORIZE_INDEX.upsert(vectorizeRecords);
           }
-        }));
-        await env2.VECTORIZE_INDEX.upsert(vectorizeRecords);
+        }
+      } catch (embedErr) {
+        console.warn("Embedding upsert failed (document metadata still saved)", embedErr);
       }
     } else {
       console.warn("Workers AI or Vectorize binding missing, skipped embedding upsert");
@@ -2854,81 +2908,94 @@ async function indexDocument(env2, doc) {
     return { success: false, chunksCount: 0, error: err.message || "Indexing failed" };
   }
 }
+async function searchKnowledgeTextFallback(env2, query, options) {
+  const topK = options?.topK || 4;
+  const siteId = (options?.siteId || "").trim();
+  const collected = [];
+  const domains = options?.domains && options.domains.length > 0 ? options.domains : [void 0];
+  for (const domain2 of domains) {
+    const docs = await getKbDocuments(env2.DB, {
+      domain: domain2,
+      relProductId: options?.relProductId,
+      siteId: siteId || void 0,
+      search: query
+    });
+    for (const d of docs) {
+      collected.push({
+        chunk: {
+          id: "fallback_" + d.id,
+          document_id: d.id,
+          domain: d.domain,
+          chunk_index: 0,
+          content: d.content.substring(0, 400),
+          vector_id: "",
+          created_at: d.created_at,
+          site_id: d.site_id || null
+        },
+        score: 0.8,
+        title: d.title
+      });
+      if (collected.length >= topK)
+        break;
+    }
+    if (collected.length >= topK)
+      break;
+  }
+  return collected.slice(0, topK);
+}
 async function searchKnowledge(env2, query, options) {
   const topK = options?.topK || 4;
   const minScore = options?.minScore || 0.45;
   const siteId = (options?.siteId || "").trim();
   if (!env2.AI || !env2.VECTORIZE_INDEX) {
-    const collected = [];
-    const domains = options?.domains && options.domains.length > 0 ? options.domains : [void 0];
-    for (const domain2 of domains) {
-      const docs = await getKbDocuments(env2.DB, {
-        domain: domain2,
-        relProductId: options?.relProductId,
-        siteId: siteId || void 0,
-        search: query
-      });
-      for (const d of docs) {
-        collected.push({
-          chunk: {
-            id: "fallback_" + d.id,
-            document_id: d.id,
-            domain: d.domain,
-            chunk_index: 0,
-            content: d.content.substring(0, 400),
-            vector_id: "",
-            created_at: d.created_at,
-            site_id: d.site_id || null
-          },
-          score: 0.8,
-          title: d.title
-        });
-        if (collected.length >= topK)
-          break;
-      }
-      if (collected.length >= topK)
-        break;
+    return searchKnowledgeTextFallback(env2, query, options);
+  }
+  try {
+    const embedRes = await env2.AI.run(EMBEDDING_MODEL, { text: [query] });
+    const queryVector = normalizeEmbeddingVectors(embedRes)[0];
+    if (!queryVector) {
+      console.warn("Embedding returned empty vector, falling back to text search");
+      return searchKnowledgeTextFallback(env2, query, options);
     }
-    return collected.slice(0, topK);
+    const filter = {};
+    if (options?.domains && options.domains.length === 1) {
+      filter.domain = options.domains[0];
+    } else if (options?.domains && options.domains.length > 1) {
+      filter.domain = { $in: options.domains };
+    }
+    if (options?.relProductId) {
+      filter.rel_product_id = options.relProductId;
+    }
+    if (siteId) {
+      filter.site_id = siteId;
+    }
+    const queryParams = { topK: topK * 2 };
+    if (Object.keys(filter).length > 0) {
+      queryParams.filter = filter;
+    }
+    const vecResult = await env2.VECTORIZE_INDEX.query(queryVector, queryParams);
+    const matches = (vecResult.matches || []).filter((m) => m.score >= minScore).slice(0, topK);
+    if (matches.length === 0) {
+      return [];
+    }
+    const vectorIds = matches.map((m) => m.id);
+    const chunks = await getKbChunksByVectorIds(env2.DB, vectorIds);
+    const chunkMap = /* @__PURE__ */ new Map();
+    chunks.forEach((c) => chunkMap.set(c.vector_id, c));
+    return matches.map((m) => {
+      const c = chunkMap.get(m.id);
+      if (!c)
+        return null;
+      return {
+        chunk: c,
+        score: m.score,
+        title: m.metadata?.title
+      };
+    }).filter(Boolean);
+  } catch (err) {
+    console.warn("Vector search failed, falling back to text search", err);
+    return searchKnowledgeTextFallback(env2, query, options);
   }
-  const embedRes = await env2.AI.run(EMBEDDING_MODEL, { text: [query] });
-  const queryVectors = embedRes.data || embedRes;
-  const queryVector = queryVectors[0];
-  const filter = {};
-  if (options?.domains && options.domains.length === 1) {
-    filter.domain = options.domains[0];
-  } else if (options?.domains && options.domains.length > 1) {
-    filter.domain = { $in: options.domains };
-  }
-  if (options?.relProductId) {
-    filter.rel_product_id = options.relProductId;
-  }
-  if (siteId) {
-    filter.site_id = siteId;
-  }
-  const queryParams = { topK: topK * 2 };
-  if (Object.keys(filter).length > 0) {
-    queryParams.filter = filter;
-  }
-  const vecResult = await env2.VECTORIZE_INDEX.query(queryVector, queryParams);
-  const matches = (vecResult.matches || []).filter((m) => m.score >= minScore).slice(0, topK);
-  if (matches.length === 0) {
-    return [];
-  }
-  const vectorIds = matches.map((m) => m.id);
-  const chunks = await getKbChunksByVectorIds(env2.DB, vectorIds);
-  const chunkMap = /* @__PURE__ */ new Map();
-  chunks.forEach((c) => chunkMap.set(c.vector_id, c));
-  return matches.map((m) => {
-    const c = chunkMap.get(m.id);
-    if (!c)
-      return null;
-    return {
-      chunk: c,
-      score: m.score,
-      title: m.metadata?.title
-    };
-  }).filter(Boolean);
 }
 function normalizeLlmText(raw2, depth = 0) {
   if (raw2 == null || depth > 8)
@@ -3162,12 +3229,17 @@ async function callLlmWithFallback(env2, messages, configuredChannels) {
 }
 async function askKnowledge(env2, question, conversationHistory = [], options) {
   const siteId = (options?.siteId || "").trim() || null;
-  const searchResults = await searchKnowledge(env2, question, {
-    domains: ["support", "product"],
-    siteId,
-    topK: 3,
-    minScore: 0.35
-  });
+  let searchResults = [];
+  try {
+    searchResults = await searchKnowledge(env2, question, {
+      domains: ["support", "product"],
+      siteId,
+      topK: 3,
+      minScore: 0.35
+    });
+  } catch (err) {
+    console.warn("askKnowledge searchKnowledge failed, continuing without KB context", err);
+  }
   const contextText = searchResults.map((r, i) => `[Reference ${i + 1} - ${r.title || "Knowledge"}]:
 ${r.chunk.content}`).join("\n\n");
   const customPrompt = await getAiConfigValue(env2, "ai_system_prompt", siteId);
@@ -3211,9 +3283,8 @@ ${contextText || "(no closely related excerpts found)"}`;
     };
   } catch (err) {
     console.error("All AI channels failed in askKnowledge:", err);
-    const errMsg = String(err?.message || err || "").slice(0, 180);
     const fallbackAnswer = searchResults.length > 0 ? `Based on the knowledge base:
-${searchResults[0].chunk.content}` : `AI assistant is temporarily unavailable (${errMsg || "model error"}). An agent will follow up shortly.`;
+${searchResults[0].chunk.content}` : VISITOR_AI_SOFT_FALLBACK;
     return {
       answer: fallbackAnswer,
       sources: searchResults.map((r) => ({ title: r.title, score: r.score })),
@@ -3356,7 +3427,7 @@ ${JSON.stringify(fields)}`;
   }
   return { translations, results, used_channel: lastUsedChannel };
 }
-var EMBEDDING_MODEL, DEPRECATED_MODEL_MAP, CF_AI_FALLBACK_MODELS, CF_ULTIMATE_MODEL, DEFAULT_MODEL_POOL;
+var EMBEDDING_MODEL, DEPRECATED_MODEL_MAP, CF_AI_FALLBACK_MODELS, CF_ULTIMATE_MODEL, DEFAULT_MODEL_POOL, VISITOR_AI_SOFT_FALLBACK;
 var init_kbService = __esm({
   "src/worker/services/kbService.ts"() {
     "use strict";
@@ -3367,7 +3438,8 @@ var init_kbService = __esm({
     init_settings();
     init_sites();
     __name(getAiConfigValue, "getAiConfigValue");
-    EMBEDDING_MODEL = "@cf/baai/bge-large-zh-v1.5";
+    EMBEDDING_MODEL = "@cf/qwen/qwen3-embedding-0.6b";
+    __name(normalizeEmbeddingVectors, "normalizeEmbeddingVectors");
     DEPRECATED_MODEL_MAP = {
       "@cf/meta/llama-3.1-8b-instruct": "@cf/meta/llama-3.1-8b-instruct-fp8",
       "@cf/meta/llama-3.1-8b-instruct-awq": "@cf/meta/llama-3.1-8b-instruct-fp8",
@@ -3435,6 +3507,7 @@ var init_kbService = __esm({
     ];
     __name(splitTextIntoChunks, "splitTextIntoChunks");
     __name(indexDocument, "indexDocument");
+    __name(searchKnowledgeTextFallback, "searchKnowledgeTextFallback");
     __name(searchKnowledge, "searchKnowledge");
     __name(normalizeLlmText, "normalizeLlmText");
     __name(asTrimmedText, "asTrimmedText");
@@ -3446,6 +3519,7 @@ var init_kbService = __esm({
     __name(callOpenAiCompatible, "callOpenAiCompatible");
     __name(testAiChannel, "testAiChannel");
     __name(callLlmWithFallback, "callLlmWithFallback");
+    VISITOR_AI_SOFT_FALLBACK = "Thanks for your message. I do not have that information in our knowledge base yet \u2014 a human agent will follow up with you shortly.";
     __name(askKnowledge, "askKnowledge");
     __name(extractJsonObject, "extractJsonObject");
     __name(preferTranslatePool, "preferTranslatePool");
@@ -10749,13 +10823,6 @@ analyticsRouter.post("/analytics/ga/property", async (c) => {
     if (isErrorResponse(admin))
       return admin;
     const body = await c.req.json();
-    const siteId = readSiteId4(c, body);
-    if (!siteId) {
-      return c.json({ success: false, message: "Select a site before linking a GA4 property" }, 400);
-    }
-    if (!await agentCanAccessSite(c.env.DB, admin, siteId)) {
-      return c.json({ success: false, message: "No permission to manage this site" }, 403);
-    }
     const id = String(body.property_id || "").replace(/^properties\//, "").trim();
     if (!id)
       return c.json({ success: false, message: "Select a GA4 property" }, 400);
@@ -10765,7 +10832,7 @@ analyticsRouter.post("/analytics/ga/property", async (c) => {
     } else {
       updates.ga_report_enabled = "1";
     }
-    await updateSiteSettings(c.env.DB, siteId, updates);
+    await updateSystemSettings(c.env.DB, updates);
     return c.json({ success: true });
   } catch (err) {
     return c.json({ success: false, message: err.message }, 500);
@@ -10786,14 +10853,17 @@ analyticsRouter.get("/analytics/ga/report", async (c) => {
     const siteMap = await getMergedSiteSettings(c.env.DB, siteId);
     const saReady = hasGaServiceAccount(c.env);
     if (siteMap.ga_report_enabled !== "1" && !saReady) {
-      return c.json({ success: false, message: "GA reporting disabled for this site" }, 400);
+      return c.json(
+        { success: false, message: "Google reporting is disabled. Enable it under Settings \u2192 Google Analytics." },
+        400
+      );
     }
     const propertyId = resolvePropertyId(c.env, siteMap);
     if (!propertyId) {
       return c.json(
         {
           success: false,
-          message: "Select a GA4 property for this site, or set GA4_PROPERTY_ID secret"
+          message: "Link a Google property under Settings \u2192 Google Analytics, or set GA4_PROPERTY_ID"
         },
         400
       );
@@ -10888,7 +10958,13 @@ async function handleGaHostsOverview(c) {
       propertyId = resolvePropertyId(c.env, siteMap);
       const saReady = hasGaServiceAccount(c.env);
       if (siteMap.ga_report_enabled !== "1" && !saReady) {
-        return c.json({ success: false, message: "GA reporting disabled for this site" }, 400);
+        return c.json(
+          {
+            success: false,
+            message: "Google reporting is disabled. Enable it under Settings \u2192 Google Analytics."
+          },
+          400
+        );
       }
     }
     if (!propertyId) {
@@ -11755,15 +11831,14 @@ var ChatCoordinator = class {
                 await publishAiText(answer);
               } else {
                 await publishAiText(
-                  "AI assistant could not generate a reply right now. An agent will follow up shortly."
+                  "Thanks for your message. A human agent will follow up with you shortly."
                 );
               }
             } catch (e) {
               console.warn("Failed to auto answer with KB RAG", e);
               try {
-                const detail = String(e?.message || e || "unknown error").slice(0, 160);
                 await publishAiText(
-                  `AI assistant is temporarily unavailable (${detail}). An agent will follow up shortly.`
+                  "Thanks for your message. A human agent will follow up with you shortly."
                 );
               } catch {
               }

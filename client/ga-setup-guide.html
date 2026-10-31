@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>谷歌分析（GA）配置指南</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #fafafa;
+      --card: #fff;
+      --text: #18181b;
+      --muted: #71717a;
+      --line: #e4e4e7;
+      --accent: #059669;
+      --accent-soft: #ecfdf5;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+      font-size: 15px;
+    }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 28px 20px 64px; }
+    h1 { font-size: 1.55rem; margin: 0 0 8px; letter-spacing: -0.02em; }
+    .lead { color: var(--muted); margin: 0 0 24px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 20px 20px 8px;
+      margin-bottom: 16px;
+    }
+    .card h2 {
+      font-size: 1.05rem;
+      margin: 0 0 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .step-num {
+      display: inline-flex;
+      width: 24px; height: 24px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    ol.steps { margin: 0 0 12px; padding-left: 1.25rem; }
+    ol.steps li { margin: 0 0 8px; }
+    .tip {
+      background: var(--accent-soft);
+      border: 1px solid #a7f3d0;
+      color: #065f46;
+      border-radius: 12px;
+      padding: 12px 14px;
+      font-size: 14px;
+      margin: 12px 0 16px;
+    }
+    code, .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9em;
+      background: #f4f4f5;
+      padding: 1px 6px;
+      border-radius: 6px;
+    }
+    a { color: #047857; }
+    .muted { color: var(--muted); font-size: 14px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 8px 0 16px; }
+    th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+    th { background: #f4f4f5; }
+    details { margin: 0 0 12px; }
+    summary { cursor: pointer; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>谷歌分析配置指南</h1>
+    <p class="lead">
+      目标很简单：所有网站共用一套谷歌分析账号；访客打开聊天、提交询盘时自动记一笔；
+      后台「询盘分析」里能看到流量。按下面顺序做即可，不必了解技术术语。
+    </p>
+
+    <div class="tip">
+      <strong>请先记住两件事：</strong><br />
+      1）谷歌分析在本系统里是<strong>全账号统一配置</strong>（不是每个站点各配一套）。<br />
+      2）看数据时，系统会按<strong>网站域名</strong>自动区分不同站点。
+    </div>
+
+    <div class="card">
+      <h2><span class="step-num">1</span> 在谷歌分析拿到「衡量 ID」</h2>
+      <ol class="steps">
+        <li>用浏览器打开 <a href="https://analytics.google.com/" target="_blank" rel="noreferrer">analytics.google.com</a> 并登录。</li>
+        <li>左下角点齿轮图标「管理」。</li>
+        <li>中间一列找到「数据流」→ 点开你的网站数据流（没有就新建一个「网站」数据流，填入主站网址）。</li>
+        <li>页面上方会看到以 <span class="mono">G-</span> 开头的一串字符，例如 <span class="mono">G-ABC123XYZ</span>。把它复制下来。<br />
+          <span class="muted">这一串叫「衡量 ID」。后面只要填这一项，聊天事件就能进谷歌。</span>
+        </li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <h2><span class="step-num">2</span> 在本系统里粘贴并保存</h2>
+      <ol class="steps">
+        <li>登录客服后台 → 左侧或顶部进入 <strong>设置</strong> → 打开 <strong>谷歌分析</strong> 页签。</li>
+        <li>勾选「启用聊天事件上报」。</li>
+        <li>在「衡量 ID」输入框粘贴刚才的 <span class="mono">G-…</span>。</li>
+        <li>点页面右上角 <strong>保存设置</strong>。</li>
+        <li>等大约 5 分钟（或硬刷新业务网站），再测试。</li>
+      </ol>
+      <p class="muted">说明：这一项对所有站点生效。各站点网页只要已嵌入本系统的聊天挂件，就会用同一套衡量 ID 上报。</p>
+    </div>
+
+    <div class="card">
+      <h2><span class="step-num">3</span> 确认网站已嵌入挂件（只插一段）</h2>
+      <ol class="steps">
+        <li>在后台「设置 → 代码嵌入」复制挂件代码。</li>
+        <li>粘贴到每个业务网站 HTML 的 <span class="mono">&lt;/body&gt;</span> 前。</li>
+        <li><strong>每个页面只放这一段脚本</strong>，不要重复粘贴多遍。</li>
+        <li>该网站的域名必须已在本系统「站点」里登记为授权域名。</li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <h2><span class="step-num">4</span> 验证事件是否进了谷歌（约 1 分钟）</h2>
+      <ol class="steps">
+        <li>打开谷歌分析 → 左侧「报告」→「实时」。</li>
+        <li>用手机或另一个浏览器打开你的业务网站，点开聊天挂件，发送一条消息，或提交一次表单/留言。</li>
+        <li>在实时报告里应陆续看到类似事件：
+          <table>
+            <tr><th>事件名</th><th>含义</th></tr>
+            <tr><td><span class="mono">chat_open</span></td><td>打开了聊天窗口</td></tr>
+            <tr><td><span class="mono">chat_engaged</span></td><td>产生了有效互动</td></tr>
+            <tr><td><span class="mono">inquiry_submit</span></td><td>提交了询盘 / 表单 / 留言</td></tr>
+          </table>
+        </li>
+      </ol>
+      <p class="muted">若实时里没有：检查衡量 ID 是否以 G- 开头、是否已保存、域名是否授权、是否只嵌入了一段挂件。</p>
+    </div>
+
+    <div class="card">
+      <h2><span class="step-num">5</span>（可选）让后台「询盘分析」也能拉谷歌报表</h2>
+      <p>做到第 4 步，你已经可以在<strong>谷歌分析网站</strong>里看数据。若还希望在<strong>本系统询盘分析页</strong>直接看到访问量，继续下面任一方式。</p>
+
+      <h3 style="font-size:0.95rem;margin:16px 0 8px;">方式 A：连接谷歌账号（适合自己操作）</h3>
+      <ol class="steps">
+        <li>打开 <a href="https://console.cloud.google.com/" target="_blank" rel="noreferrer">Google Cloud 控制台</a>，选一个项目（没有就新建）。</li>
+        <li>搜索并启用这两个接口：
+          <ul>
+            <li>Google Analytics Data API</li>
+            <li>Google Analytics Admin API</li>
+          </ul>
+        </li>
+        <li>进入「Google Auth Platform / 凭据」→ 创建「OAuth 客户端 ID」→ 类型选「Web 应用」。</li>
+        <li>「已获授权的重定向 URI」填（把域名换成你的后台域名）：<br />
+          <span class="mono">https://你的后台域名/api/analytics/ga/oauth/callback</span>
+        </li>
+        <li>把生成的「客户端 ID」「客户端密钥」填回本系统「谷歌分析」页 → <strong>先点保存设置</strong> → 再点「连接谷歌账户」并授权。</li>
+        <li>点「刷新媒体资源列表」，选中你的 GA4 媒体资源，勾选「允许询盘分析拉取谷歌报表」，再保存。</li>
+      </ol>
+
+      <h3 style="font-size:0.95rem;margin:16px 0 8px;">方式 B：由技术人员配置服务账号（一次配好，后台几乎不用再点）</h3>
+      <p class="muted">若系统由服务商托管，可请对方在 Cloudflare Worker 机密中配置服务账号，并在谷歌分析里给该邮箱「查看者」权限。配置成功后，设置页会显示「报表通道已开通」。</p>
+    </div>
+
+    <div class="card">
+      <h2><span class="step-num">6</span> 日常怎么看数据</h2>
+      <table>
+        <tr><th>你想看什么</th><th>去哪里</th></tr>
+        <tr>
+          <td>聊天有没有记上、刚发生的事件</td>
+          <td>谷歌分析 → 报告 → 实时</td>
+        </tr>
+        <tr>
+          <td>按网站域名拆开看流量</td>
+          <td>谷歌分析探索 / 报告里用「主机名」；或本系统「询盘分析」（会按当前站点域名筛选）</td>
+        </tr>
+        <tr>
+          <td>本系统自己的询盘漏斗（不依赖谷歌）</td>
+          <td>后台 → 询盘分析</td>
+        </tr>
+      </table>
+    </div>
+
+    <details class="card" open>
+      <summary>常见问题</summary>
+      <p><strong>为什么不是每个站点单独填一套 G-？</strong><br />
+        一套衡量 ID 更简单，也方便对比各站。系统上报时会带上当前网站域名，查询时按域名区分。</p>
+      <p><strong>网站自己已经装了谷歌统计怎么办？</strong><br />
+        可以。挂件会尽量复用页面上已有的谷歌标签，一般不会再插第二份脚本。仍请在本系统填写同一个衡量 ID，以便发送聊天相关事件。</p>
+      <p><strong>保存后没变化？</strong><br />
+        挂件配置有短暂缓存，请等待数分钟或强制刷新页面后再试。</p>
+    </details>
+
+    <p class="muted">文档版本与当前系统「统一配置、按域名查询」行为一致。详细技术说明见仓库 <span class="mono">docs/GA_SETUP.md</span>（面向实施人员）。</p>
+  </div>
+</body>
+</html>
