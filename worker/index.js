@@ -12036,6 +12036,18 @@ var ChatCoordinator = class {
       if (packet.type === "message") {
         const msgPayload = packet.data;
         if (!msgPayload || !msgPayload.conversation_id || !msgPayload.content) {
+          try {
+            ws.send(
+              JSON.stringify({
+                type: "error",
+                data: {
+                  code: "invalid_message",
+                  conversation_id: msgPayload?.conversation_id || null
+                }
+              })
+            );
+          } catch {
+          }
           return;
         }
         const cid = msgPayload.conversation_id;

@@ -1,1 +1,1 @@
-This folder contains the built output assets for the worker "cloudflare-im-chat" generated at 2026-11-13T01:23:12.382Z.
+This folder contains the built output assets for the worker "cloudflare-im-chat" generated at 2026-11-21T08:51:18.298Z.
