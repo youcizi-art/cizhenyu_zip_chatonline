@@ -1029,6 +1029,8 @@ var init_crypto = __esm({
 
 // src/worker/db/auth.ts
 async function ensureDefaultAdmin(db) {
+  if (defaultAdminEnsured)
+    return;
   const countRes = await db.prepare("SELECT COUNT(*) as count FROM agents").first();
   if (countRes && countRes.count === 0) {
     const adminId = "agent_" + crypto.randomUUID().slice(0, 8);
@@ -1046,6 +1048,7 @@ async function ensureDefaultAdmin(db) {
       Date.now()
     ).run();
   }
+  defaultAdminEnsured = true;
 }
 async function verifyAgent(db, username, password) {
   await ensureDefaultAdmin(db);
@@ -1162,6 +1165,7 @@ async function findLeastLoadedOnlineAgent(db) {
   list.sort((a, b) => (loadMap.get(a.id) || 0) - (loadMap.get(b.id) || 0));
   return { id: list[0].id, name: list[0].display_name, username: list[0].username };
 }
+var defaultAdminEnsured;
 var init_auth = __esm({
   "src/worker/db/auth.ts"() {
     "use strict";
@@ -1169,6 +1173,7 @@ var init_auth = __esm({
     init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
     init_performance2();
     init_crypto();
+    defaultAdminEnsured = false;
     __name(ensureDefaultAdmin, "ensureDefaultAdmin");
     __name(verifyAgent, "verifyAgent");
     __name(getAgentById, "getAgentById");
@@ -1533,7 +1538,15 @@ function hostFromRequest(req, pageUrl) {
   }
   return "";
 }
-async function ensureSitesSchema(db) {
+async function runEnsureSitesSchema(db) {
+  try {
+    const siteCol = await db.prepare(`SELECT name FROM pragma_table_info('conversations') WHERE name = 'site_id' LIMIT 1`).first();
+    if (siteCol) {
+      await db.prepare(VISITOR_JOURNEY_DDL).run();
+      return;
+    }
+  } catch {
+  }
   await db.prepare(
     `CREATE TABLE IF NOT EXISTS sites (
         id TEXT PRIMARY KEY,
@@ -1566,34 +1579,39 @@ async function ensureSitesSchema(db) {
         PRIMARY KEY (agent_id, site_id)
       )`
   ).run();
-  try {
-    await db.prepare("ALTER TABLE conversations ADD COLUMN site_id TEXT").run();
-  } catch {
+  await db.prepare(VISITOR_JOURNEY_DDL).run();
+  const tryAlter = /* @__PURE__ */ __name(async (sql) => {
+    try {
+      await db.prepare(sql).run();
+    } catch {
+    }
+  }, "tryAlter");
+  await tryAlter("ALTER TABLE conversations ADD COLUMN site_id TEXT");
+  await tryAlter("CREATE INDEX IF NOT EXISTS idx_conversations_site ON conversations(site_id)");
+  await tryAlter("ALTER TABLE conversations ADD COLUMN ip TEXT DEFAULT NULL");
+  await tryAlter("ALTER TABLE conversations ADD COLUMN country TEXT DEFAULT NULL");
+  await tryAlter("ALTER TABLE conversations ADD COLUMN city TEXT DEFAULT NULL");
+  await tryAlter("ALTER TABLE conversations ADD COLUMN assigned_agent_name TEXT DEFAULT NULL");
+  await tryAlter("ALTER TABLE conversations ADD COLUMN platform TEXT DEFAULT 'web'");
+  await tryAlter("ALTER TABLE conversations ADD COLUMN page_context TEXT DEFAULT NULL");
+  await tryAlter("ALTER TABLE conversations ADD COLUMN product_snapshot TEXT DEFAULT NULL");
+  await tryAlter("ALTER TABLE conversations ADD COLUMN device_info TEXT DEFAULT NULL");
+  await tryAlter("ALTER TABLE conversations ADD COLUMN isp TEXT DEFAULT NULL");
+  await tryAlter("ALTER TABLE conversations ADD COLUMN timezone TEXT DEFAULT NULL");
+  await tryAlter("ALTER TABLE custom_forms ADD COLUMN site_id TEXT");
+  await tryAlter("ALTER TABLE form_submissions ADD COLUMN site_id TEXT");
+  await tryAlter("ALTER TABLE cms_categories ADD COLUMN site_id TEXT");
+  await tryAlter("ALTER TABLE cms_articles ADD COLUMN site_id TEXT");
+  await tryAlter("ALTER TABLE cms_products ADD COLUMN site_id TEXT");
+}
+async function ensureSitesSchema(db) {
+  if (!sitesSchemaReady) {
+    sitesSchemaReady = runEnsureSitesSchema(db).catch((err) => {
+      sitesSchemaReady = null;
+      throw err;
+    });
   }
-  try {
-    await db.prepare("CREATE INDEX IF NOT EXISTS idx_conversations_site ON conversations(site_id)").run();
-  } catch {
-  }
-  try {
-    await db.prepare("ALTER TABLE custom_forms ADD COLUMN site_id TEXT").run();
-  } catch {
-  }
-  try {
-    await db.prepare("ALTER TABLE form_submissions ADD COLUMN site_id TEXT").run();
-  } catch {
-  }
-  try {
-    await db.prepare("ALTER TABLE cms_categories ADD COLUMN site_id TEXT").run();
-  } catch {
-  }
-  try {
-    await db.prepare("ALTER TABLE cms_articles ADD COLUMN site_id TEXT").run();
-  } catch {
-  }
-  try {
-    await db.prepare("ALTER TABLE cms_products ADD COLUMN site_id TEXT").run();
-  } catch {
-  }
+  return sitesSchemaReady;
 }
 async function attachHosts(db, sites) {
   if (!sites.length)
@@ -1818,7 +1836,7 @@ async function resolveSiteForVisitor(db, req, opts) {
   }
   return null;
 }
-var SITE_SETTING_KEYS, GA_SHARED_SETTING_KEYS, SITE_SETTING_KEY_SET, GA_SHARED_KEY_SET;
+var SITE_SETTING_KEYS, GA_SHARED_SETTING_KEYS, SITE_SETTING_KEY_SET, GA_SHARED_KEY_SET, sitesSchemaReady, VISITOR_JOURNEY_DDL;
 var init_sites = __esm({
   "src/worker/db/sites.ts"() {
     "use strict";
@@ -1858,6 +1876,17 @@ var init_sites = __esm({
     __name(isSiteSettingKey, "isSiteSettingKey");
     __name(normalizeHost, "normalizeHost");
     __name(hostFromRequest, "hostFromRequest");
+    sitesSchemaReady = null;
+    VISITOR_JOURNEY_DDL = `CREATE TABLE IF NOT EXISTS visitor_journey_logs (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  visitor_id TEXT NOT NULL,
+  page_title TEXT,
+  page_url TEXT NOT NULL,
+  stay_seconds INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL
+)`;
+    __name(runEnsureSitesSchema, "runEnsureSitesSchema");
     __name(ensureSitesSchema, "ensureSitesSchema");
     __name(attachHosts, "attachHosts");
     __name(listSites, "listSites");
@@ -1896,28 +1925,6 @@ __export(conversations_exports, {
 });
 async function getOrCreateConversation(db, visitorId, siteId, visitorName, visitorLang, geo, contextData) {
   await ensureSitesSchema(db);
-  try {
-    await db.prepare("ALTER TABLE conversations ADD COLUMN ip TEXT DEFAULT NULL").run();
-    await db.prepare("ALTER TABLE conversations ADD COLUMN country TEXT DEFAULT NULL").run();
-    await db.prepare("ALTER TABLE conversations ADD COLUMN city TEXT DEFAULT NULL").run();
-    await db.prepare("ALTER TABLE conversations ADD COLUMN assigned_agent_name TEXT DEFAULT NULL").run();
-    await db.prepare("ALTER TABLE conversations ADD COLUMN platform TEXT DEFAULT 'web'").run();
-    await db.prepare("ALTER TABLE conversations ADD COLUMN page_context TEXT DEFAULT NULL").run();
-    await db.prepare("ALTER TABLE conversations ADD COLUMN product_snapshot TEXT DEFAULT NULL").run();
-    await db.prepare("ALTER TABLE conversations ADD COLUMN device_info TEXT DEFAULT NULL").run();
-    await db.prepare("ALTER TABLE conversations ADD COLUMN isp TEXT DEFAULT NULL").run();
-    await db.prepare("ALTER TABLE conversations ADD COLUMN timezone TEXT DEFAULT NULL").run();
-    await db.prepare(`CREATE TABLE IF NOT EXISTS visitor_journey_logs (
-      id TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
-      visitor_id TEXT NOT NULL,
-      page_title TEXT,
-      page_url TEXT NOT NULL,
-      stay_seconds INTEGER DEFAULT 0,
-      created_at INTEGER NOT NULL
-    )`).run();
-  } catch (e) {
-  }
   if (!siteId)
     throw new Error("Missing site");
   const pageContextJson = contextData?.page_context ? JSON.stringify(contextData.page_context) : null;
@@ -1996,7 +2003,22 @@ async function getOrCreateConversation(db, visitorId, siteId, visitorName, visit
       } catch (e) {
       }
     }
-    conv = await db.prepare("SELECT * FROM conversations WHERE id = ?").bind(conv.id).first();
+    if (geo?.ip?.trim())
+      conv.ip = geo.ip.trim();
+    if (geo?.country?.trim())
+      conv.country = geo.country.trim();
+    if (geo?.city?.trim())
+      conv.city = geo.city.trim();
+    if (geo?.isp?.trim())
+      conv.isp = geo.isp.trim();
+    if (geo?.timezone?.trim())
+      conv.timezone = geo.timezone.trim();
+    if (pageContextJson)
+      conv.page_context = pageContextJson;
+    if (productSnapshotJson)
+      conv.product_snapshot = productSnapshotJson;
+    if (deviceInfoJson)
+      conv.device_info = deviceInfoJson;
     return { conversation: conv, isNew: false };
   }
   const id = `conv_${crypto.randomUUID().slice(0, 8)}`;
@@ -2112,10 +2134,6 @@ async function getVisitorJourneyLogs(db, conversationId) {
 }
 async function getConversations(db, opts) {
   await ensureSitesSchema(db);
-  try {
-    await db.prepare("ALTER TABLE conversations ADD COLUMN platform TEXT DEFAULT 'web'").run();
-  } catch (e) {
-  }
   let sql = "SELECT * FROM conversations WHERE 1=1";
   const params = [];
   if (opts?.siteId) {
@@ -2254,19 +2272,11 @@ async function deleteConversation(db, conversationId, bucket) {
   return { mediaCount, visitorId };
 }
 async function updateConversationTag(db, conversationId, tag) {
-  try {
-    await db.prepare("ALTER TABLE conversations ADD COLUMN tag TEXT DEFAULT NULL").run();
-  } catch (e) {
-  }
   await db.prepare(
     "UPDATE conversations SET tag = ? WHERE id = ?"
   ).bind(tag, conversationId).run();
 }
 async function batchCleanupConversations(db, bucket, options) {
-  try {
-    await db.prepare("ALTER TABLE conversations ADD COLUMN tag TEXT DEFAULT NULL").run();
-  } catch (e) {
-  }
   const res = await db.prepare("SELECT id, group_id, tag FROM conversations").all();
   const list = res.results || [];
   const toDeleteIds = [];
@@ -5512,7 +5522,7 @@ chatRouter.post("/visitor/init", async (c) => {
     if (isNew && c.env.COORDINATOR) {
       try {
         const stub = c.env.COORDINATOR.get(c.env.COORDINATOR.idFromName("global_chat_coordinator"));
-        await stub.fetch(
+        const broadcast = stub.fetch(
           new Request("http://coordinator/broadcast-message", {
             method: "POST",
             headers: internalRequestHeaders(c.env),
@@ -5526,7 +5536,8 @@ chatRouter.post("/visitor/init", async (c) => {
               created_at: conversation.created_at || Date.now()
             })
           })
-        );
+        ).catch(() => void 0);
+        c.executionCtx.waitUntil(broadcast);
       } catch {
       }
     }
@@ -11951,6 +11962,16 @@ var ChatCoordinator = class {
     if (url.pathname === "/broadcast-message" && request.method === "POST") {
       try {
         const savedMsg = await request.json();
+        let siteId2 = (savedMsg.site_id || "").trim();
+        if (!siteId2 && savedMsg.conversation_id) {
+          try {
+            const row = await this.env.DB.prepare(
+              "SELECT site_id FROM conversations WHERE id = ?"
+            ).bind(savedMsg.conversation_id).first();
+            siteId2 = (row?.site_id || "").trim();
+          } catch {
+          }
+        }
         this.broadcastToConversation(savedMsg.conversation_id, {
           type: "message",
           data: savedMsg
@@ -11963,6 +11984,7 @@ var ChatCoordinator = class {
           type: "conversation_update",
           data: {
             conversation_id: savedMsg.conversation_id,
+            site_id: siteId2 || null,
             last_message: savedMsg
           }
         });
@@ -12111,6 +12133,14 @@ var ChatCoordinator = class {
           type: "message",
           data: savedMsg
         });
+        let broadcastSiteId = "";
+        try {
+          const siteRow = await this.env.DB.prepare(
+            "SELECT site_id FROM conversations WHERE id = ?"
+          ).bind(savedMsg.conversation_id).first();
+          broadcastSiteId = (siteRow?.site_id || "").trim();
+        } catch {
+        }
         this.broadcastToAgents({
           type: "message",
           data: savedMsg
@@ -12119,6 +12149,7 @@ var ChatCoordinator = class {
           type: "conversation_update",
           data: {
             conversation_id: savedMsg.conversation_id,
+            site_id: broadcastSiteId || null,
             last_message: savedMsg
           }
         });
