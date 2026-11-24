@@ -7109,6 +7109,10 @@ async function ensureFormTables(db) {
     await db.prepare("ALTER TABLE custom_forms ADD COLUMN site_id TEXT").run();
   } catch {
   }
+  try {
+    await db.prepare("ALTER TABLE custom_forms ADD COLUMN render_template TEXT DEFAULT 'standard'").run();
+  } catch {
+  }
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS form_submissions (
       id TEXT PRIMARY KEY,
@@ -7185,6 +7189,7 @@ function rowToForm(r, submissionsCount = 0) {
     key: r.key,
     site_id: r.site_id || "",
     allowed_domains: r.allowed_domains || "",
+    render_template: r.render_template || "standard",
     fields,
     translations_json: translations,
     style,
@@ -7239,9 +7244,9 @@ async function createCustomForm(db, data) {
   const title2 = listTitle(data.translations_json, data.key);
   await db.prepare(`
     INSERT INTO custom_forms (
-      id, key, site_id, title, description, allowed_domains,
+      id, key, site_id, title, description, allowed_domains, render_template,
       fields_json, style_config_json, translations_json, status, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
   `).bind(
     id,
     data.key,
@@ -7249,6 +7254,7 @@ async function createCustomForm(db, data) {
     title2,
     "",
     data.allowed_domains || "",
+    data.render_template || "standard",
     JSON.stringify(data.fields || []),
     JSON.stringify(data.style || DEFAULT_STYLE),
     JSON.stringify(data.translations_json || {}),
@@ -7267,6 +7273,7 @@ async function updateCustomForm(db, id, data) {
       title = ?,
       description = ?,
       allowed_domains = ?,
+      render_template = COALESCE(?, render_template, 'standard'),
       fields_json = ?,
       style_config_json = ?,
       translations_json = ?,
@@ -7276,6 +7283,7 @@ async function updateCustomForm(db, id, data) {
     title2,
     "",
     data.allowed_domains || "",
+    data.render_template || null,
     JSON.stringify(data.fields || []),
     JSON.stringify(data.style || DEFAULT_STYLE),
     JSON.stringify(data.translations_json || {}),
@@ -7356,7 +7364,1410 @@ __name(deleteFormSubmission, "deleteFormSubmission");
 
 // src/worker/routes/forms.ts
 init_sites();
+
+// src/shared/form-validation.ts
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+init_performance2();
+
+// src/shared/form-formula.ts
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+init_performance2();
+var MAX_EXPR_LENGTH = 512;
+var MAX_PARSE_DEPTH = 16;
+function toSafeNumber(raw2) {
+  if (typeof raw2 === "number") {
+    return Number.isFinite(raw2) ? raw2 : 0;
+  }
+  if (typeof raw2 === "string") {
+    const trimmed = raw2.trim().replace(/,/g, "");
+    if (!trimmed)
+      return 0;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+__name(toSafeNumber, "toSafeNumber");
+function roundToPrecision(val, precision = 2) {
+  if (!Number.isFinite(val))
+    return 0;
+  const p = Math.max(0, Math.min(6, Math.floor(precision)));
+  const expStr = `${val}e${p}`;
+  const shifted = Number(expStr);
+  if (Number.isFinite(shifted)) {
+    return Number(`${Math.round(shifted)}e-${p}`);
+  }
+  const factor = 10 ** p;
+  return Math.round(val * factor) / factor;
+}
+__name(roundToPrecision, "roundToPrecision");
+function extractRepeaterColumnNumbers(pathIdent, ctx) {
+  const dotIdx = pathIdent.indexOf(".");
+  if (dotIdx <= 0 || dotIdx === pathIdent.length - 1)
+    return null;
+  const tableKey = pathIdent.slice(0, dotIdx);
+  const colKey = pathIdent.slice(dotIdx + 1);
+  const source = ctx.rootData || ctx.vars;
+  const rows = source[tableKey];
+  if (!Array.isArray(rows))
+    return [];
+  return rows.map((row) => row && typeof row === "object" ? toSafeNumber(row[colKey]) : 0);
+}
+__name(extractRepeaterColumnNumbers, "extractRepeaterColumnNumbers");
+var FORMULA_FUNCTIONS = {
+  SUM: (args, ctx) => {
+    if (args.length === 1 && args[0].rawIdent?.includes(".")) {
+      const col = extractRepeaterColumnNumbers(args[0].rawIdent, ctx);
+      if (col)
+        return col.reduce((acc, n) => acc + n, 0);
+    }
+    return args.reduce((acc, a) => acc + a.numValue, 0);
+  },
+  AVG: (args, ctx) => {
+    if (args.length === 1 && args[0].rawIdent?.includes(".")) {
+      const col = extractRepeaterColumnNumbers(args[0].rawIdent, ctx);
+      if (col)
+        return col.length > 0 ? col.reduce((acc, n) => acc + n, 0) / col.length : 0;
+    }
+    return args.length > 0 ? args.reduce((acc, a) => acc + a.numValue, 0) / args.length : 0;
+  },
+  MIN: (args, ctx) => {
+    if (args.length === 1 && args[0].rawIdent?.includes(".")) {
+      const col = extractRepeaterColumnNumbers(args[0].rawIdent, ctx);
+      if (col)
+        return col.length > 0 ? Math.min(...col) : 0;
+    }
+    return args.length > 0 ? Math.min(...args.map((a) => a.numValue)) : 0;
+  },
+  MAX: (args, ctx) => {
+    if (args.length === 1 && args[0].rawIdent?.includes(".")) {
+      const col = extractRepeaterColumnNumbers(args[0].rawIdent, ctx);
+      if (col)
+        return col.length > 0 ? Math.max(...col) : 0;
+    }
+    return args.length > 0 ? Math.max(...args.map((a) => a.numValue)) : 0;
+  },
+  COUNT: (args, ctx) => {
+    if (args.length === 0)
+      return 0;
+    const ident = args[0].rawIdent;
+    const source = ctx.rootData || ctx.vars;
+    if (ident) {
+      if (ident.includes(".")) {
+        const [tableKey, colKey] = ident.split(".");
+        const rows = source[tableKey];
+        if (!Array.isArray(rows))
+          return 0;
+        return rows.filter((r) => {
+          if (!r || typeof r !== "object")
+            return false;
+          const v = r[colKey];
+          return v !== void 0 && v !== null && String(v).trim() !== "";
+        }).length;
+      }
+      const target = source[ident];
+      if (Array.isArray(target))
+        return target.length;
+      return target !== void 0 && target !== null && String(target).trim() !== "" ? 1 : 0;
+    }
+    return args.length;
+  }
+};
+function tokenizeFormula(expr) {
+  const src = expr.trim();
+  if (!src)
+    return [];
+  if (src.length > MAX_EXPR_LENGTH) {
+    throw new Error("Formula exceeds maximum length");
+  }
+  const tokens = [];
+  let i = 0;
+  while (i < src.length) {
+    const ch = src[i];
+    if (/\s/.test(ch)) {
+      i++;
+      continue;
+    }
+    if (ch === "+" || ch === "-" || ch === "*" || ch === "/") {
+      tokens.push({ type: "op", value: ch });
+      i++;
+      continue;
+    }
+    if (ch === "(") {
+      tokens.push({ type: "lparen", value: ch });
+      i++;
+      continue;
+    }
+    if (ch === ")") {
+      tokens.push({ type: "rparen", value: ch });
+      i++;
+      continue;
+    }
+    if (ch === ",") {
+      tokens.push({ type: "comma", value: ch });
+      i++;
+      continue;
+    }
+    if (/[0-9]/.test(ch) || ch === "." && /[0-9]/.test(src[i + 1] || "")) {
+      let numStr = "";
+      let dotCount = 0;
+      while (i < src.length && /[0-9.]/.test(src[i])) {
+        if (src[i] === ".")
+          dotCount++;
+        if (dotCount > 1)
+          throw new Error(`Invalid number literal near "${numStr}."`);
+        numStr += src[i++];
+      }
+      tokens.push({ type: "number", value: numStr });
+      continue;
+    }
+    if (/[a-zA-Z_]/.test(ch)) {
+      let ident = "";
+      while (i < src.length && /[a-zA-Z0-9_.]/.test(src[i])) {
+        ident += src[i++];
+      }
+      if (ident.startsWith(".") || ident.endsWith(".") || ident.includes("..")) {
+        throw new Error(`Invalid field reference "${ident}"`);
+      }
+      tokens.push({ type: "ident", value: ident });
+      continue;
+    }
+    throw new Error(`Unexpected character "${ch}" in formula`);
+  }
+  return tokens;
+}
+__name(tokenizeFormula, "tokenizeFormula");
+var FormulaParser = class {
+  constructor(tokens, ctx, syntaxCheckOnly = false) {
+    this.tokens = tokens;
+    this.ctx = ctx;
+    this.syntaxCheckOnly = syntaxCheckOnly;
+  }
+  pos = 0;
+  parseRoot() {
+    if (this.tokens.length === 0) {
+      if (this.syntaxCheckOnly)
+        throw new Error("Formula cannot be empty");
+      return 0;
+    }
+    const result = this.parseAddSub(0);
+    if (this.pos < this.tokens.length) {
+      throw new Error(`Unexpected token "${this.tokens[this.pos].value}"`);
+    }
+    return Number.isFinite(result) ? result : 0;
+  }
+  peek() {
+    return this.tokens[this.pos];
+  }
+  consume() {
+    return this.tokens[this.pos++];
+  }
+  parseAddSub(depth) {
+    if (depth > MAX_PARSE_DEPTH)
+      throw new Error("Formula nesting is too deep");
+    let left = this.parseMulDiv(depth);
+    while (this.peek()?.type === "op" && (this.peek().value === "+" || this.peek().value === "-")) {
+      const op = this.consume().value;
+      const right = this.parseMulDiv(depth);
+      left = op === "+" ? left + right : left - right;
+    }
+    return left;
+  }
+  parseMulDiv(depth) {
+    let left = this.parseUnary(depth);
+    while (this.peek()?.type === "op" && (this.peek().value === "*" || this.peek().value === "/")) {
+      const op = this.consume().value;
+      const right = this.parseUnary(depth);
+      if (op === "*") {
+        left = left * right;
+      } else {
+        left = right === 0 ? 0 : left / right;
+      }
+    }
+    return left;
+  }
+  parseUnary(depth) {
+    const tok = this.peek();
+    if (tok?.type === "op" && (tok.value === "+" || tok.value === "-")) {
+      this.consume();
+      const val = this.parseUnary(depth + 1);
+      return tok.value === "-" ? -val : val;
+    }
+    return this.parsePrimary(depth);
+  }
+  parsePrimary(depth) {
+    const tok = this.peek();
+    if (!tok)
+      throw new Error("Unexpected end of formula");
+    if (tok.type === "number") {
+      this.consume();
+      return Number(tok.value);
+    }
+    if (tok.type === "lparen") {
+      this.consume();
+      const inner = this.parseAddSub(depth + 1);
+      if (this.peek()?.type !== "rparen") {
+        throw new Error('Missing closing parenthesis ")"');
+      }
+      this.consume();
+      return inner;
+    }
+    if (tok.type === "ident") {
+      this.consume();
+      if (this.peek()?.type === "lparen") {
+        this.consume();
+        const fnName = tok.value.toUpperCase();
+        const handler = FORMULA_FUNCTIONS[fnName];
+        if (!handler) {
+          throw new Error(`Unsupported function "${tok.value}"`);
+        }
+        const args = [];
+        if (this.peek()?.type !== "rparen") {
+          while (true) {
+            const startPos = this.pos;
+            const singleIdent = this.tokens[startPos]?.type === "ident" && (this.tokens[startPos + 1]?.type === "comma" || this.tokens[startPos + 1]?.type === "rparen") ? this.tokens[startPos].value : void 0;
+            const argVal = this.parseAddSub(depth + 1);
+            args.push({ rawIdent: singleIdent, numValue: argVal });
+            if (this.peek()?.type === "comma") {
+              this.consume();
+              continue;
+            }
+            break;
+          }
+        }
+        if (this.peek()?.type !== "rparen") {
+          throw new Error(`Missing closing ")" for ${tok.value}()`);
+        }
+        this.consume();
+        return this.syntaxCheckOnly ? 0 : handler(args, this.ctx);
+      }
+      if (this.syntaxCheckOnly)
+        return 0;
+      return toSafeNumber(this.ctx.vars[tok.value]);
+    }
+    throw new Error(`Unexpected token "${tok.value}"`);
+  }
+};
+__name(FormulaParser, "FormulaParser");
+function validateFormulaSyntax(expr) {
+  try {
+    const tokens = tokenizeFormula(expr);
+    const parser = new FormulaParser(tokens, { vars: {} }, true);
+    parser.parseRoot();
+    return { valid: true };
+  } catch (err) {
+    return { valid: false, error: err?.message || "Invalid formula" };
+  }
+}
+__name(validateFormulaSyntax, "validateFormulaSyntax");
+function evaluateFormulaExpression(expr, ctx) {
+  if (!expr || !expr.trim())
+    return 0;
+  try {
+    const tokens = tokenizeFormula(expr);
+    const parser = new FormulaParser(tokens, ctx, false);
+    return parser.parseRoot();
+  } catch {
+    return 0;
+  }
+}
+__name(evaluateFormulaExpression, "evaluateFormulaExpression");
+function computeFormValues(fields, rawData) {
+  const nextData = { ...rawData || {} };
+  for (const field of fields) {
+    if (field.type !== "repeater" || !Array.isArray(field.subFields))
+      continue;
+    const rawRows = nextData[field.key];
+    if (!Array.isArray(rawRows))
+      continue;
+    const rowFormulaFields = field.subFields.filter((sf) => sf.type === "formula" && sf.formula?.trim());
+    if (rowFormulaFields.length === 0)
+      continue;
+    nextData[field.key] = rawRows.map((rawRow) => {
+      const rowObj = rawRow && typeof rawRow === "object" ? { ...rawRow } : {};
+      for (let pass = 0; pass < 2; pass++) {
+        let changed = false;
+        for (const sf of rowFormulaFields) {
+          const rawVal = evaluateFormulaExpression(sf.formula, {
+            vars: rowObj,
+            rootData: nextData
+          });
+          const rounded = roundToPrecision(rawVal, sf.precision ?? 2);
+          if (rowObj[sf.key] !== rounded) {
+            rowObj[sf.key] = rounded;
+            changed = true;
+          }
+        }
+        if (!changed)
+          break;
+      }
+      return rowObj;
+    });
+  }
+  const rootFormulaFields = fields.filter((f) => f.type === "formula" && f.formula?.trim());
+  if (rootFormulaFields.length > 0) {
+    for (let pass = 0; pass < 3; pass++) {
+      let changed = false;
+      for (const f of rootFormulaFields) {
+        const rawVal = evaluateFormulaExpression(f.formula, {
+          vars: nextData,
+          rootData: nextData
+        });
+        const rounded = roundToPrecision(rawVal, f.precision ?? 2);
+        if (nextData[f.key] !== rounded) {
+          nextData[f.key] = rounded;
+          changed = true;
+        }
+      }
+      if (!changed)
+        break;
+    }
+  }
+  return nextData;
+}
+__name(computeFormValues, "computeFormValues");
+
+// src/shared/form-validation.ts
+function getLabel(f) {
+  return "label" in f && f.label ? f.label : f.key;
+}
+__name(getLabel, "getLabel");
+function isEmptyValue(val) {
+  return val === void 0 || val === null || val === "" || Array.isArray(val) && val.length === 0;
+}
+__name(isEmptyValue, "isEmptyValue");
+function checkNumberBounds(field, val) {
+  if (val === void 0 || val === null || val === "")
+    return { ok: true };
+  const num = typeof val === "number" ? val : Number(String(val).trim());
+  if (!Number.isFinite(num)) {
+    return { ok: false, reason: "invalid_number" };
+  }
+  if (typeof field.min === "number" && num < field.min) {
+    return { ok: false, reason: "min", limit: field.min };
+  }
+  if (typeof field.max === "number" && num > field.max) {
+    return { ok: false, reason: "max", limit: field.max };
+  }
+  return { ok: true };
+}
+__name(checkNumberBounds, "checkNumberBounds");
+function validateFormSubmissionData(fields, data) {
+  for (const field of fields) {
+    if (field.type === "formula")
+      continue;
+    const val = data[field.key];
+    const label = getLabel(field);
+    if (field.type === "repeater") {
+      const rows = Array.isArray(val) ? val : [];
+      const minRows = typeof field.minRows === "number" ? Math.max(0, field.minRows) : field.required ? 1 : 0;
+      const maxRows = typeof field.maxRows === "number" ? Math.max(1, field.maxRows) : 50;
+      if (field.required && rows.length === 0 || rows.length < minRows) {
+        return {
+          valid: false,
+          fieldKey: field.key,
+          fieldLabel: label,
+          reason: "min_rows",
+          limitValue: Math.max(1, minRows)
+        };
+      }
+      if (rows.length > maxRows) {
+        return {
+          valid: false,
+          fieldKey: field.key,
+          fieldLabel: label,
+          reason: "max_rows",
+          limitValue: maxRows
+        };
+      }
+      const subFields = field.subFields || [];
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i] && typeof rows[i] === "object" ? rows[i] : {};
+        for (const sf of subFields) {
+          if (sf.type === "formula")
+            continue;
+          const cellVal = row[sf.key];
+          const subLabel = getLabel(sf);
+          if (sf.required && isEmptyValue(cellVal)) {
+            return {
+              valid: false,
+              fieldKey: field.key,
+              fieldLabel: label,
+              subFieldKey: sf.key,
+              subFieldLabel: subLabel,
+              rowIndex: i + 1,
+              reason: "required"
+            };
+          }
+          if (sf.type === "number") {
+            const numCheck = checkNumberBounds(sf, cellVal);
+            if (!numCheck.ok) {
+              return {
+                valid: false,
+                fieldKey: field.key,
+                fieldLabel: label,
+                subFieldKey: sf.key,
+                subFieldLabel: subLabel,
+                rowIndex: i + 1,
+                reason: numCheck.reason,
+                limitValue: numCheck.limit
+              };
+            }
+          }
+        }
+      }
+      continue;
+    }
+    if (field.required && isEmptyValue(val)) {
+      return {
+        valid: false,
+        fieldKey: field.key,
+        fieldLabel: label,
+        reason: "required"
+      };
+    }
+    if (field.type === "number") {
+      const numCheck = checkNumberBounds(field, val);
+      if (!numCheck.ok) {
+        return {
+          valid: false,
+          fieldKey: field.key,
+          fieldLabel: label,
+          reason: numCheck.reason,
+          limitValue: numCheck.limit
+        };
+      }
+    }
+  }
+  return { valid: true };
+}
+__name(validateFormSubmissionData, "validateFormSubmissionData");
+function normalizeAndComputeFormData(fields, rawData) {
+  const cleaned = { ...rawData || {} };
+  for (const field of fields) {
+    if (field.type === "number") {
+      const raw2 = cleaned[field.key];
+      if (raw2 !== void 0 && raw2 !== null && String(raw2).trim() !== "") {
+        const n = Number(String(raw2).trim());
+        cleaned[field.key] = Number.isFinite(n) ? roundToPrecision(n, field.precision ?? 2) : 0;
+      } else {
+        cleaned[field.key] = null;
+      }
+    } else if (field.type === "repeater") {
+      const rawRows = Array.isArray(cleaned[field.key]) ? cleaned[field.key] : [];
+      const subFields = field.subFields || [];
+      cleaned[field.key] = rawRows.filter((r) => r && typeof r === "object").map((r) => {
+        const nextRow = {};
+        for (const sf of subFields) {
+          const cell = r[sf.key];
+          if (sf.type === "number") {
+            if (cell !== void 0 && cell !== null && String(cell).trim() !== "") {
+              const n = Number(String(cell).trim());
+              nextRow[sf.key] = Number.isFinite(n) ? roundToPrecision(n, sf.precision ?? 2) : 0;
+            } else {
+              nextRow[sf.key] = null;
+            }
+          } else if (sf.type !== "formula") {
+            nextRow[sf.key] = cell ?? "";
+          }
+        }
+        return nextRow;
+      });
+    }
+  }
+  return computeFormValues(fields, cleaned);
+}
+__name(normalizeAndComputeFormData, "normalizeAndComputeFormData");
+function formatFormValidationError(res, isZh = true) {
+  if (res.valid)
+    return "";
+  const target = res.rowIndex ? isZh ? `\u3010${res.fieldLabel}\u3011\u7B2C ${res.rowIndex} \u884C\u7684\u3010${res.subFieldLabel}\u3011` : `"${res.subFieldLabel}" in "${res.fieldLabel}" (Row ${res.rowIndex})` : isZh ? `\u3010${res.fieldLabel}\u3011` : `"${res.fieldLabel}"`;
+  switch (res.reason) {
+    case "min_rows":
+      return isZh ? `\u8BF7\u81F3\u5C11\u5728${target}\u4E2D\u6DFB\u52A0 ${res.limitValue ?? 1} \u884C\u660E\u7EC6` : `Please add at least ${res.limitValue ?? 1} row(s) in ${target}`;
+    case "max_rows":
+      return isZh ? `${target}\u6700\u591A\u5141\u8BB8\u6DFB\u52A0 ${res.limitValue} \u884C` : `${target} allows at most ${res.limitValue} rows`;
+    case "invalid_number":
+      return isZh ? `${target}\u8BF7\u8F93\u5165\u6709\u6548\u6570\u5B57` : `Please enter a valid number for ${target}`;
+    case "min":
+      return isZh ? `${target}\u4E0D\u80FD\u5C0F\u4E8E ${res.limitValue}` : `${target} must be at least ${res.limitValue}`;
+    case "max":
+      return isZh ? `${target}\u4E0D\u80FD\u5927\u4E8E ${res.limitValue}` : `${target} must be at most ${res.limitValue}`;
+    default:
+      return isZh ? `\u8BF7\u586B\u5199${target}` : `Please fill in ${target}`;
+  }
+}
+__name(formatFormValidationError, "formatFormValidationError");
+
+// src/worker/routes/form-templates.ts
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+init_performance2();
+
+// src/worker/db/form-templates.ts
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+init_performance2();
+
+// src/shared/builtin-form-templates.ts
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_process();
+init_virtual_unenv_global_polyfill_cloudflare_unenv_preset_node_console();
+init_performance2();
+var optKeys = /* @__PURE__ */ __name((...keys) => keys.map((key) => ({ key })), "optKeys");
+var fld = /* @__PURE__ */ __name((key, type, required = false, extra) => ({
+  id: `sys_${key}`,
+  key,
+  type,
+  required,
+  ...extra
+}), "fld");
+var BUILTIN_FORM_TEMPLATES = [
+  // ==================== 1. 外贸通用报价单 ====================
+  {
+    id: "tpl_sys_quotation",
+    scope: "system",
+    name: "\u5916\u8D38\u901A\u7528\u62A5\u4EF7\u5355",
+    name_en: "Foreign Trade Quotation",
+    category: "foreign_trade",
+    description: "\u542B\u62A5\u4EF7\u5355\u53F7\u3001\u8D38\u6613\u672F\u8BED\u3001\u7ED3\u7B97\u5E01\u79CD\u3001\u5546\u54C1\u660E\u7EC6\u5B50\u8868\uFF08\u81EA\u52A8\u7B97\u884C\u5C0F\u8BA1\uFF09\u3001\u6D77\u8FD0\u8D39/\u4FDD\u9669/\u6298\u6263\u53CA\u603B\u4EF7\u8054\u52A8\u8BA1\u7B97",
+    description_en: "Complete export quotation with Incoterms, currency, line items repeater, shipping/discount, and auto-calculated totals",
+    suggested_key: "trade_quotation",
+    render_template: "quotation_doc",
+    is_shared: 1,
+    created_at: 0,
+    updated_at: 0,
+    style: { primary_color: "#2563eb", bg_color: "white", border_radius: 8, size: "medium" },
+    fields: [
+      fld("quote_no", "text", true),
+      fld("valid_until", "text", true),
+      fld("incoterms", "select", true, { options: optKeys("exw", "fob", "cif", "cfr", "ddp", "dap") }),
+      fld("currency", "select", true, { options: optKeys("usd", "eur", "cny", "gbp") }),
+      fld("items", "repeater", true, {
+        minRows: 1,
+        maxRows: 50,
+        subFields: [
+          fld("name", "text", true),
+          fld("spec", "text", false),
+          fld("photo", "image", false),
+          fld("price", "number", true, { precision: 2, prefix: "$", min: 0 }),
+          fld("qty", "number", true, { precision: 0, suffix: "PCS", min: 1 }),
+          fld("amount", "formula", false, { precision: 2, prefix: "$", formula: "price * qty" })
+        ]
+      }),
+      fld("sub_total", "formula", false, { precision: 2, prefix: "$", formula: "SUM(items.amount)" }),
+      fld("shipping", "number", false, { precision: 2, prefix: "$", min: 0 }),
+      fld("insurance", "number", false, { precision: 2, prefix: "$", min: 0 }),
+      fld("discount", "number", false, { precision: 2, prefix: "$", min: 0 }),
+      fld("grand_total", "formula", false, {
+        precision: 2,
+        prefix: "$",
+        formula: "sub_total + shipping + insurance - discount"
+      }),
+      fld("payment_terms", "textarea", false)
+    ],
+    translations_json: {
+      "zh-CN": {
+        title: "\u5916\u8D38\u5546\u54C1\u62A5\u4EF7\u5355",
+        description: "\u8BF7\u6838\u5BF9\u4EE5\u4E0B\u5546\u54C1\u660E\u7EC6\u3001\u8D38\u6613\u6761\u6B3E\u4E0E\u8D39\u7528\u6784\u6210\uFF0C\u5982\u6709\u7591\u95EE\u968F\u65F6\u8054\u7CFB\u4E13\u5C5E\u4E1A\u52A1\u7ECF\u7406\u3002",
+        button_text: "\u786E\u8BA4\u5E76\u63D0\u4EA4\u62A5\u4EF7\u5355",
+        success_message: "\u62A5\u4EF7\u5355\u5DF2\u6210\u529F\u63D0\u4EA4\uFF01\u6211\u4EEC\u5C06\u5C3D\u5FEB\u4E0E\u60A8\u8DDF\u8FDB\u786E\u8BA4\u3002",
+        fields: {
+          quote_no: { label: "\u62A5\u4EF7\u5355\u53F7", placeholder: "\u5982\uFF1AQT-20261125-01" },
+          valid_until: { label: "\u62A5\u4EF7\u6709\u6548\u671F", placeholder: "\u5982\uFF1A15 \u5929 / 2026-12-15" },
+          incoterms: {
+            label: "\u8D38\u6613\u672F\u8BED (Incoterms)",
+            placeholder: "\u8BF7\u9009\u62E9\u8D38\u6613\u672F\u8BED",
+            options: [
+              { key: "exw", label: "EXW \u5DE5\u5382\u4EA4\u8D27" },
+              { key: "fob", label: "FOB \u88C5\u8FD0\u6E2F\u8239\u4E0A\u4EA4\u8D27" },
+              { key: "cif", label: "CIF \u6210\u672C\u52A0\u4FDD\u9669\u8D39\u52A0\u8FD0\u8D39" },
+              { key: "cfr", label: "CFR \u6210\u672C\u52A0\u8FD0\u8D39" },
+              { key: "ddp", label: "DDP \u5B8C\u7A0E\u540E\u4EA4\u8D27" },
+              { key: "dap", label: "DAP \u76EE\u7684\u5730\u4EA4\u8D27" }
+            ]
+          },
+          currency: {
+            label: "\u7ED3\u7B97\u5E01\u79CD",
+            options: [
+              { key: "usd", label: "USD \u7F8E\u5143 ($)" },
+              { key: "eur", label: "EUR \u6B27\u5143 (\u20AC)" },
+              { key: "cny", label: "CNY \u4EBA\u6C11\u5E01 (\xA5)" },
+              { key: "gbp", label: "GBP \u82F1\u9551 (\xA3)" }
+            ]
+          },
+          items: { label: "\u62A5\u4EF7\u5546\u54C1\u660E\u7EC6", addButtonText: "+ \u6DFB\u52A0\u5546\u54C1\u884C" },
+          "items.name": { label: "\u4EA7\u54C1\u540D\u79F0", placeholder: "\u8F93\u5165\u54C1\u540D" },
+          "items.spec": { label: "\u89C4\u683C\u578B\u53F7", placeholder: "\u5C3A\u5BF8 / \u989C\u8272 / \u6750\u8D28" },
+          "items.photo": { label: "\u4EA7\u54C1\u56FE" },
+          "items.price": { label: "\u5355\u4EF7", placeholder: "0.00" },
+          "items.qty": { label: "\u6570\u91CF", placeholder: "100" },
+          "items.amount": { label: "\u884C\u5C0F\u8BA1" },
+          sub_total: { label: "\u5546\u54C1\u91D1\u989D\u5C0F\u8BA1" },
+          shipping: { label: "\u9884\u8BA1\u8FD0\u8D39", placeholder: "0.00" },
+          insurance: { label: "\u8D27\u8FD0\u4FDD\u9669\u8D39", placeholder: "0.00" },
+          discount: { label: "\u4E13\u9879\u6298\u6263\u51CF\u514D", placeholder: "0.00" },
+          grand_total: { label: "\u62A5\u4EF7\u603B\u8BA1\u91D1\u989D" },
+          payment_terms: {
+            label: "\u4ED8\u6B3E\u6761\u4EF6\u4E0E\u94F6\u884C\u8D26\u6237\u6761\u6B3E",
+            placeholder: "\u5982\uFF1A30% T/T \u9884\u4ED8\u5B9A\u91D1\uFF0C70% \u89C1\u63D0\u5355\u526F\u672C\u4ED8\u6E05\uFF1B\u4EA4\u8D27\u671F 20 \u4E2A\u5DE5\u4F5C\u65E5..."
+          }
+        }
+      },
+      en: {
+        title: "Official Quotation",
+        description: "Please review the item specifications, trade terms, and total amount below.",
+        button_text: "Submit Quotation",
+        success_message: "Quotation submitted successfully!",
+        fields: {
+          quote_no: { label: "Quotation No.", placeholder: "e.g. QT-20261125-01" },
+          valid_until: { label: "Valid Until", placeholder: "e.g. 15 Days / 2026-12-15" },
+          incoterms: {
+            label: "Incoterms",
+            placeholder: "Select Incoterms",
+            options: [
+              { key: "exw", label: "EXW (Ex Works)" },
+              { key: "fob", label: "FOB (Free On Board)" },
+              { key: "cif", label: "CIF (Cost, Insurance & Freight)" },
+              { key: "cfr", label: "CFR (Cost & Freight)" },
+              { key: "ddp", label: "DDP (Delivered Duty Paid)" },
+              { key: "dap", label: "DAP (Delivered at Place)" }
+            ]
+          },
+          currency: {
+            label: "Currency",
+            options: [
+              { key: "usd", label: "USD ($)" },
+              { key: "eur", label: "EUR (\u20AC)" },
+              { key: "cny", label: "CNY (\xA5)" },
+              { key: "gbp", label: "GBP (\xA3)" }
+            ]
+          },
+          items: { label: "Quotation Line Items", addButtonText: "+ Add Item" },
+          "items.name": { label: "Product Name", placeholder: "Item name" },
+          "items.spec": { label: "Specification", placeholder: "Model / Size / Material" },
+          "items.photo": { label: "Image" },
+          "items.price": { label: "Unit Price", placeholder: "0.00" },
+          "items.qty": { label: "Quantity", placeholder: "100" },
+          "items.amount": { label: "Amount" },
+          sub_total: { label: "Subtotal" },
+          shipping: { label: "Shipping Cost", placeholder: "0.00" },
+          insurance: { label: "Insurance", placeholder: "0.00" },
+          discount: { label: "Discount", placeholder: "0.00" },
+          grand_total: { label: "Grand Total" },
+          payment_terms: {
+            label: "Payment & Bank Terms",
+            placeholder: "e.g. 30% T/T deposit in advance, 70% balance against copy of B/L..."
+          }
+        }
+      }
+    }
+  },
+  // ==================== 2. 形式发票 / 商业发票 (PI / CI) ====================
+  {
+    id: "tpl_sys_proforma_invoice",
+    scope: "system",
+    name: "\u5F62\u5F0F\u53D1\u7968 / \u5546\u4E1A\u53D1\u7968 (PI)",
+    name_en: "Proforma / Commercial Invoice",
+    category: "foreign_trade",
+    description: "\u5305\u542B\u53D1\u7968\u53F7\u3001\u88C5\u8FD0\u6E2F/\u76EE\u7684\u6E2F\u3001\u551B\u5934\u3001\u542B HS Code \u7684\u8D27\u7269\u660E\u7EC6\u8868\uFF0C\u4EE5\u53CA\u603B\u7BB1\u6570/\u603B\u6BDB\u91CD/\u603B CBM \u4E0E\u5E94\u4ED8\u603B\u989D\u8BA1\u7B97",
+    description_en: "Standard PI/CI schema with ports, shipping marks, HS Code items table, cartons/G.W./CBM, and invoice total",
+    suggested_key: "proforma_invoice",
+    render_template: "invoice_doc",
+    is_shared: 1,
+    created_at: 0,
+    updated_at: 0,
+    style: { primary_color: "#18181b", bg_color: "white", border_radius: 6, size: "medium" },
+    fields: [
+      fld("invoice_no", "text", true),
+      fld("buyer_info", "text", true),
+      fld("incoterms", "select", true, { options: optKeys("fob", "cif", "exw", "ddp") }),
+      fld("loading_port", "text", false),
+      fld("destination_port", "text", false),
+      fld("shipping_marks", "text", false),
+      fld("items", "repeater", true, {
+        minRows: 1,
+        maxRows: 80,
+        subFields: [
+          fld("name", "text", true),
+          fld("hs_code", "text", false),
+          fld("price", "number", true, { precision: 2, prefix: "$", min: 0 }),
+          fld("qty", "number", true, { precision: 0, suffix: "PCS", min: 1 }),
+          fld("amount", "formula", false, { precision: 2, prefix: "$", formula: "price * qty" })
+        ]
+      }),
+      fld("total_cartons", "number", false, { precision: 0, suffix: "CTNS", min: 0 }),
+      fld("gross_weight", "number", false, { precision: 2, suffix: "KG", min: 0 }),
+      fld("total_cbm", "number", false, { precision: 3, suffix: "CBM", min: 0 }),
+      fld("freight_cost", "number", false, { precision: 2, prefix: "$", min: 0 }),
+      fld("invoice_total", "formula", false, {
+        precision: 2,
+        prefix: "$",
+        formula: "SUM(items.amount) + freight_cost"
+      }),
+      fld("bank_details", "textarea", false)
+    ],
+    translations_json: {
+      "zh-CN": {
+        title: "\u5F62\u5F0F\u53D1\u7968 / \u5546\u4E1A\u53D1\u7968 (PI / CI)",
+        description: "\u7528\u4E8E\u8BA2\u5355\u786E\u8BA4\u3001\u5B89\u6392\u6253\u6B3E\u53CA\u62A5\u5173\u5355\u8BC1\u6838\u5BF9\u7684\u6807\u51C6\u5916\u8D38\u53D1\u7968\u5355\u636E\u3002",
+        button_text: "\u63D0\u4EA4\u53D1\u7968\u5355\u636E",
+        success_message: "\u53D1\u7968\u4FE1\u606F\u5DF2\u63D0\u4EA4\u4FDD\u5B58\uFF01",
+        fields: {
+          invoice_no: { label: "\u53D1\u7968\u7F16\u53F7 (Invoice No.)", placeholder: "\u5982\uFF1API-20261125-08" },
+          buyer_info: { label: "\u4E70\u65B9\u516C\u53F8\u540D\u79F0\u4E0E\u5730\u5740", placeholder: "\u586B\u5199\u5BA2\u6237\u516C\u53F8\u5168\u79F0\u53CA\u6CE8\u518C\u5730\u5740" },
+          incoterms: {
+            label: "\u8D38\u6613\u672F\u8BED",
+            options: [
+              { key: "fob", label: "FOB" },
+              { key: "cif", label: "CIF" },
+              { key: "exw", label: "EXW" },
+              { key: "ddp", label: "DDP" }
+            ]
+          },
+          loading_port: { label: "\u88C5\u8FD0\u6E2F (Port of Loading)", placeholder: "\u5982\uFF1AShenzhen / Ningbo, China" },
+          destination_port: { label: "\u76EE\u7684\u6E2F (Port of Destination)", placeholder: "\u5982\uFF1ALos Angeles, USA" },
+          shipping_marks: { label: "\u7BB1\u551B / \u551B\u5934 (Shipping Marks)", placeholder: "\u5982\uFF1AN/M \u6216\u5BA2\u6237\u6307\u5B9A\u7BB1\u551B" },
+          items: { label: "\u51FA\u53E3\u8D27\u7269\u660E\u7EC6\u8868", addButtonText: "+ \u6DFB\u52A0\u8D27\u7269\u884C" },
+          "items.name": { label: "\u4E2D\u82F1\u6587\u54C1\u540D\u53CA\u89C4\u683C", placeholder: "\u54C1\u540D\u4E0E\u89C4\u683C\u63CF\u8FF0" },
+          "items.hs_code": { label: "HS \u6D77\u5173\u7F16\u7801", placeholder: "\u5982\uFF1A850440" },
+          "items.price": { label: "\u5355\u4EF7", placeholder: "0.00" },
+          "items.qty": { label: "\u6570\u91CF", placeholder: "100" },
+          "items.amount": { label: "\u91D1\u989D\u5C0F\u8BA1" },
+          total_cartons: { label: "\u603B\u7BB1\u6570", placeholder: "0" },
+          gross_weight: { label: "\u603B\u6BDB\u91CD (G.W.)", placeholder: "0.00" },
+          total_cbm: { label: "\u603B\u4F53\u79EF (Measurement)", placeholder: "0.000" },
+          freight_cost: { label: "\u8FD0\u8D39 (Freight)", placeholder: "0.00" },
+          invoice_total: { label: "\u53D1\u7968\u5E94\u4ED8\u603B\u989D" },
+          bank_details: { label: "\u53D7\u76CA\u4EBA\u6536\u6B3E\u94F6\u884C\u4FE1\u606F", placeholder: "Beneficiary Name, Bank Name, SWIFT Code, Account No..." }
+        }
+      },
+      en: {
+        title: "Proforma / Commercial Invoice",
+        description: "Official trade invoice for order confirmation, remittance, and customs clearance.",
+        button_text: "Confirm Invoice",
+        success_message: "Invoice record saved successfully!",
+        fields: {
+          invoice_no: { label: "Invoice No.", placeholder: "e.g. PI-20261125-08" },
+          buyer_info: { label: "Buyer Company & Address", placeholder: "Consignee / Buyer full company details" },
+          incoterms: {
+            label: "Incoterms",
+            options: [
+              { key: "fob", label: "FOB" },
+              { key: "cif", label: "CIF" },
+              { key: "exw", label: "EXW" },
+              { key: "ddp", label: "DDP" }
+            ]
+          },
+          loading_port: { label: "Port of Loading", placeholder: "e.g. Shenzhen, China" },
+          destination_port: { label: "Port of Destination", placeholder: "e.g. Hamburg, Germany" },
+          shipping_marks: { label: "Shipping Marks", placeholder: "e.g. N/M" },
+          items: { label: "Goods Description", addButtonText: "+ Add Goods Item" },
+          "items.name": { label: "Description of Goods", placeholder: "Product & model" },
+          "items.hs_code": { label: "HS Code", placeholder: "e.g. 850440" },
+          "items.price": { label: "Unit Price", placeholder: "0.00" },
+          "items.qty": { label: "Qty", placeholder: "100" },
+          "items.amount": { label: "Amount" },
+          total_cartons: { label: "Total Cartons", placeholder: "0" },
+          gross_weight: { label: "Total Gross Weight", placeholder: "0.00" },
+          total_cbm: { label: "Total Volume", placeholder: "0.000" },
+          freight_cost: { label: "Freight Charges", placeholder: "0.00" },
+          invoice_total: { label: "Total Invoice Value" },
+          bank_details: { label: "Beneficiary Bank Details", placeholder: "SWIFT, Account No., Bank Address..." }
+        }
+      }
+    }
+  },
+  // ==================== 3. 外贸询盘 / 线索收集表 ====================
+  {
+    id: "tpl_sys_b2b_inquiry",
+    scope: "system",
+    name: "\u5916\u8D38\u8BE2\u76D8 / \u7EBF\u7D22\u6536\u96C6\u8868",
+    name_en: "B2B Inquiry & RFQ Form",
+    category: "inquiry",
+    description: "\u9002\u5408\u5D4C\u5165\u72EC\u7ACB\u7AD9\u4EA7\u54C1\u9875\u6216\u5E7F\u544A\u843D\u5730\u9875\uFF0C\u6536\u96C6\u6D77\u5916\u4E70\u5BB6\u516C\u53F8\u3001\u5DE5\u4F5C\u90AE\u7BB1\u3001WhatsApp\u3001\u76EE\u6807\u91C7\u8D2D\u91CF\u4E0E\u56FE\u7EB8\u9644\u4EF6",
+    description_en: "Ideal for B2B landing pages and product pages to capture buyer RFQ, MOQ target, lead time, and drawings",
+    suggested_key: "b2b_inquiry",
+    render_template: "standard",
+    is_shared: 1,
+    created_at: 0,
+    updated_at: 0,
+    style: { primary_color: "#07c160", bg_color: "white", border_radius: 10, size: "medium" },
+    fields: [
+      fld("company_name", "text", true),
+      fld("work_email", "text", true),
+      fld("whatsapp_linkedin", "text", true),
+      fld("target_qty", "number", false, { precision: 0, suffix: "PCS", min: 1 }),
+      fld("expected_lead_time", "select", false, { options: optKeys("urgent_15d", "normal_30d", "quarter_plan") }),
+      fld("inquiry_details", "textarea", true),
+      fld("spec_file", "file", false)
+    ],
+    translations_json: {
+      "zh-CN": {
+        title: "\u83B7\u53D6\u5DE5\u5382\u4E13\u5C5E\u62A5\u4EF7 (RFQ)",
+        description: "\u8BF7\u7559\u4E0B\u60A8\u7684\u91C7\u8D2D\u9700\u6C42\u4E0E\u4F01\u4E1A\u8054\u7CFB\u65B9\u5F0F\uFF0C\u6211\u4EEC\u7684\u5916\u8D38\u4E13\u5BB6\u5C06\u5728 12 \u5C0F\u65F6\u5185\u53D1\u9001\u8BE6\u7EC6\u62A5\u4EF7\u5355\u3002",
+        button_text: "\u7ACB\u5373\u83B7\u53D6\u62A5\u4EF7",
+        success_message: "\u611F\u8C22\u60A8\u7684\u8BE2\u76D8\uFF01\u6211\u4EEC\u7684\u4E13\u5C5E\u987E\u95EE\u5DF2\u6536\u5230\u9700\u6C42\uFF0C\u5C06\u5C3D\u5FEB\u4E0E\u60A8\u8054\u7CFB\u3002",
+        fields: {
+          company_name: { label: "\u516C\u53F8\u540D\u79F0", placeholder: "\u8BF7\u8F93\u5165\u8D35\u53F8\u540D\u79F0" },
+          work_email: { label: "\u5DE5\u4F5C\u90AE\u7BB1", placeholder: "name@company.com" },
+          whatsapp_linkedin: { label: "WhatsApp / LinkedIn", placeholder: "+1 / LinkedIn \u4E3B\u9875\u6216\u5FAE\u4FE1\u53F7" },
+          target_qty: { label: "\u9884\u8BA1\u91C7\u8D2D\u6570\u91CF", placeholder: "\u5982\uFF1A1000" },
+          expected_lead_time: {
+            label: "\u671F\u671B\u4EA4\u8D27\u5468\u671F",
+            placeholder: "\u8BF7\u9009\u62E9\u4EA4\u671F\u8981\u6C42",
+            options: [
+              { key: "urgent_15d", label: "\u6025\u5355\uFF0815 \u5929\u5185\u51FA\u8D27\uFF09" },
+              { key: "normal_30d", label: "\u5E38\u89C4\uFF0815\u201330 \u5929\uFF09" },
+              { key: "quarter_plan", label: "\u5B63\u5EA6\u91C7\u8D2D\u89C4\u5212\uFF081\u20133 \u4E2A\u6708\uFF09" }
+            ]
+          },
+          inquiry_details: {
+            label: "\u5177\u4F53\u5B9A\u5236\u8981\u6C42\u4E0E\u89C4\u683C\u8BF4\u660E",
+            placeholder: "\u8BF7\u63CF\u8FF0\u4EA7\u54C1\u578B\u53F7\u3001OEM/ODM \u5305\u88C5\u5B9A\u5236\u9700\u6C42\u3001\u76EE\u7684\u56FD\u5BB6\u6216\u8BA4\u8BC1\u8981\u6C42..."
+          },
+          spec_file: { label: "\u4E0A\u4F20\u56FE\u7EB8 / \u91C7\u8D2D\u6E05\u5355 (PDF/Excel/\u56FE\u7247)" }
+        }
+      },
+      en: {
+        title: "Request a Factory Quote (RFQ)",
+        description: "Tell us your specifications and target quantity. Our export team will reply within 12 business hours.",
+        button_text: "Get Instant Quote",
+        success_message: "Thank you! Your inquiry has been received and our specialist will contact you shortly.",
+        fields: {
+          company_name: { label: "Company Name", placeholder: "Your company name" },
+          work_email: { label: "Business Email", placeholder: "name@company.com" },
+          whatsapp_linkedin: { label: "WhatsApp / LinkedIn", placeholder: "+1 234 567 8900 or profile URL" },
+          target_qty: { label: "Target Order Quantity", placeholder: "e.g. 1000" },
+          expected_lead_time: {
+            label: "Expected Delivery Time",
+            placeholder: "Select timeline",
+            options: [
+              { key: "urgent_15d", label: "Urgent (Within 15 days)" },
+              { key: "normal_30d", label: "Standard (15\u201330 days)" },
+              { key: "quarter_plan", label: "Quarterly Plan (1\u20133 months)" }
+            ]
+          },
+          inquiry_details: {
+            label: "Requirements & Specifications",
+            placeholder: "Please share product models, OEM/ODM customization, destination port, or certifications needed..."
+          },
+          spec_file: { label: "Attach Drawing / Spec Sheet (Optional)" }
+        }
+      }
+    }
+  },
+  // ==================== 4. 客户拜访 / 跟进记录表 ====================
+  {
+    id: "tpl_sys_crm_followup",
+    scope: "system",
+    name: "\u5BA2\u6237\u62DC\u8BBF / \u8DDF\u8FDB\u8BB0\u5F55\u8868",
+    name_en: "CRM Follow-up Log",
+    category: "crm",
+    description: "\u4F9B\u4E1A\u52A1\u56E2\u961F\u5185\u90E8\u6807\u51C6\u5316\u8BB0\u5F55\u8DDF\u8FDB\u6E20\u9053\u3001\u5BA2\u6237\u610F\u5411\u5206\u7EA7\u3001\u6838\u5FC3\u75DB\u70B9\u3001\u62A5\u4EF7\u53CD\u9988\u4E0E\u4E0B\u6B21\u8DDF\u8FDB\u8282\u70B9",
+    description_en: "Internal sales follow-up log capturing touchpoint channel, intent tier, pain points, quote feedback, and next action",
+    suggested_key: "crm_followup_log",
+    render_template: "standard",
+    is_shared: 1,
+    created_at: 0,
+    updated_at: 0,
+    style: { primary_color: "#7c3aed", bg_color: "white", border_radius: 8, size: "medium" },
+    fields: [
+      fld("customer_name", "text", true),
+      fld("channel", "radio", true, { options: optKeys("whatsapp", "email", "video_call", "onsite_expo") }),
+      fld("intent_level", "select", true, { options: optKeys("tier_a", "tier_b", "tier_c", "tier_d") }),
+      fld("pain_points", "textarea", true),
+      fld("quoted_amount", "number", false, { precision: 2, prefix: "$", min: 0 }),
+      fld("quote_feedback", "textarea", false),
+      fld("next_followup_time", "text", true)
+    ],
+    translations_json: {
+      "zh-CN": {
+        title: "\u5BA2\u6237\u62DC\u8BBF\u4E0E\u8DDF\u8FDB\u8BB0\u5F55\u8868",
+        description: "\u53CA\u65F6\u6C89\u6DC0\u6BCF\u4E00\u6B21\u5BA2\u6237\u6C9F\u901A\u7EC6\u8282\uFF0C\u63D0\u9AD8\u5546\u673A\u8F6C\u5316\u7387\u4E0E\u56E2\u961F\u534F\u4F5C\u900F\u660E\u5EA6\u3002",
+        button_text: "\u4FDD\u5B58\u8DDF\u8FDB\u8BB0\u5F55",
+        success_message: "\u5BA2\u6237\u8DDF\u8FDB\u65E5\u5FD7\u5DF2\u6210\u529F\u5F52\u6863\uFF01",
+        fields: {
+          customer_name: { label: "\u5BA2\u6237\u59D3\u540D / \u516C\u53F8\u540D", placeholder: "\u8F93\u5165\u5BA2\u6237\u6216\u4F01\u4E1A\u540D\u79F0" },
+          channel: {
+            label: "\u672C\u6B21\u8DDF\u8FDB\u65B9\u5F0F",
+            options: [
+              { key: "whatsapp", label: "WhatsApp / \u5373\u65F6\u6C9F\u901A" },
+              { key: "email", label: "\u90AE\u4EF6\u5F80\u6765" },
+              { key: "video_call", label: "Zoom / \u89C6\u9891\u4F1A\u8BAE" },
+              { key: "onsite_expo", label: "\u5C55\u4F1A\u63A5\u5F85 / \u5B9E\u5730\u62DC\u8BBF" }
+            ]
+          },
+          intent_level: {
+            label: "\u5F53\u524D\u610F\u5411\u7B49\u7EA7",
+            options: [
+              { key: "tier_a", label: "A \u7EA7\uFF1A\u9AD8\u610F\u5411\uFF08\u8FD1\u671F\u51C6\u5907\u6253\u6837\u6216\u4E0B\u5355\uFF09" },
+              { key: "tier_b", label: "B \u7EA7\uFF1A\u6BD4\u4EF7\u4E0E\u7EC6\u8282\u78CB\u5546\u4E2D" },
+              { key: "tier_c", label: "C \u7EA7\uFF1A\u6709\u9700\u6C42\u4F46\u5468\u671F\u8F83\u957F" },
+              { key: "tier_d", label: "D \u7EA7\uFF1A\u6682\u65E0\u660E\u786E\u91C7\u8D2D\u8BA1\u5212" }
+            ]
+          },
+          pain_points: { label: "\u5BA2\u6237\u6838\u5FC3\u75DB\u70B9\u4E0E\u5173\u6CE8\u6307\u6807", placeholder: "\u8BB0\u5F55\u5BA2\u6237\u6700\u5173\u5FC3\u7684\u4EF7\u683C\u3001\u4EA4\u671F\u3001\u54C1\u8D28\u8BA4\u8BC1\u6216\u7ADE\u54C1\u5BF9\u6BD4\u70B9..." },
+          quoted_amount: { label: "\u672C\u8F6E\u6D89\u53CA\u62A5\u4EF7\u91D1\u989D", placeholder: "0.00" },
+          quote_feedback: { label: "\u62A5\u4EF7\u53CD\u9988\u4E0E\u5F02\u8BAE\u70B9", placeholder: "\u5BA2\u6237\u5BF9\u5355\u4EF7\u3001MOQ \u6216\u4ED8\u6B3E\u65B9\u5F0F\u7684\u53CD\u9988..." },
+          next_followup_time: { label: "\u4E0B\u6B21\u8DDF\u8FDB\u65F6\u95F4\u4E0E\u8BA1\u5212\u52A8\u4F5C", placeholder: "\u5982\uFF1A\u672C\u5468\u4E94\u5BC4\u51FA\u6837\u54C1\u8272\u5361\u5E76\u8DDF\u8FDB\u5B9E\u6D4B\u53CD\u9988" }
+        }
+      },
+      en: {
+        title: "Customer Follow-up Log",
+        description: "Standardized sales touchpoint log for tracking deal progress and buyer feedback.",
+        button_text: "Save Follow-up Log",
+        success_message: "Follow-up log recorded successfully!",
+        fields: {
+          customer_name: { label: "Customer / Company Name", placeholder: "Buyer or account name" },
+          channel: {
+            label: "Follow-up Channel",
+            options: [
+              { key: "whatsapp", label: "WhatsApp / IM" },
+              { key: "email", label: "Email" },
+              { key: "video_call", label: "Video Call" },
+              { key: "onsite_expo", label: "Trade Show / On-site Visit" }
+            ]
+          },
+          intent_level: {
+            label: "Buyer Intent Level",
+            options: [
+              { key: "tier_a", label: "Tier A: High Intent (Ready for sample/PO)" },
+              { key: "tier_b", label: "Tier B: Active Negotiation" },
+              { key: "tier_c", label: "Tier C: Long-term Nurturing" },
+              { key: "tier_d", label: "Tier D: On Hold" }
+            ]
+          },
+          pain_points: { label: "Core Pain Points & Priorities", placeholder: "Key concerns around pricing, quality, lead time..." },
+          quoted_amount: { label: "Quoted Amount", placeholder: "0.00" },
+          quote_feedback: { label: "Quotation Feedback", placeholder: "Objections or target price feedback..." },
+          next_followup_time: { label: "Next Follow-up Date & Action", placeholder: "e.g. Next Tuesday - confirm sample test result" }
+        }
+      }
+    }
+  },
+  // ==================== 5. 样品寄送申请单 ====================
+  {
+    id: "tpl_sys_sample_dispatch",
+    scope: "system",
+    name: "\u6837\u54C1\u5BC4\u9001\u7533\u8BF7\u5355",
+    name_en: "Sample Dispatch Form",
+    category: "fulfillment",
+    description: "\u9884\u7F6E\u6D77\u5916\u6536\u4EF6\u4EBA\u5730\u5740\u3001\u90AE\u7F16\u3001\u8054\u7CFB\u7535\u8BDD\u3001\u6837\u54C1\u660E\u7EC6\u5B50\u8868\u3001\u6837\u54C1\u8D39/\u5FEB\u9012\u8D39\u6838\u7B97\u53CA\u56FD\u9645\u5FEB\u9012\u5355\u53F7\u767B\u8BB0",
+    description_en: "Sample request & dispatch form with consignee address, sample items repeater, fee calculation, and courier tracking",
+    suggested_key: "sample_dispatch",
+    render_template: "standard",
+    is_shared: 1,
+    created_at: 0,
+    updated_at: 0,
+    style: { primary_color: "#f59e0b", bg_color: "white", border_radius: 8, size: "medium" },
+    fields: [
+      fld("recipient_name", "text", true),
+      fld("contact_phone", "text", true),
+      fld("shipping_address", "textarea", true),
+      fld("postal_code", "text", true),
+      fld("samples", "repeater", true, {
+        minRows: 1,
+        maxRows: 30,
+        subFields: [
+          fld("model_name", "text", true),
+          fld("qty", "number", true, { precision: 0, suffix: "PCS", min: 1 }),
+          fld("unit_fee", "number", false, { precision: 2, prefix: "$", min: 0 }),
+          fld("line_fee", "formula", false, { precision: 2, prefix: "$", formula: "qty * unit_fee" })
+        ]
+      }),
+      fld("charge_type", "radio", true, { options: optKeys("free_sample", "paid_sample", "freight_collect") }),
+      fld("express_fee", "number", false, { precision: 2, prefix: "$", min: 0 }),
+      fld("total_receivable", "formula", false, {
+        precision: 2,
+        prefix: "$",
+        formula: "SUM(samples.line_fee) + express_fee"
+      }),
+      fld("tracking_no", "text", false)
+    ],
+    translations_json: {
+      "zh-CN": {
+        title: "\u56FD\u9645\u6837\u54C1\u5BC4\u9001\u7533\u8BF7\u5355",
+        description: "\u8BF7\u51C6\u786E\u586B\u5199\u6536\u4EF6\u4EBA\u4FE1\u606F\u4E0E\u6837\u54C1\u660E\u7EC6\uFF0C\u4EE5\u4FBF\u4ED3\u5E93\u5FEB\u901F\u5B89\u6392\u6253\u5305\u53CA\u56FD\u9645\u5FEB\u9012\u5BC4\u51FA\u3002",
+        button_text: "\u63D0\u4EA4\u5BC4\u6837\u7533\u8BF7",
+        success_message: "\u5BC4\u6837\u7533\u8BF7\u5355\u5DF2\u63D0\u4EA4\u6210\u529F\uFF01",
+        fields: {
+          recipient_name: { label: "\u6536\u4EF6\u4EBA\u59D3\u540D\u4E0E\u516C\u53F8", placeholder: "Consignee Name & Company" },
+          contact_phone: { label: "\u8054\u7CFB\u7535\u8BDD\uFF08\u542B\u56FD\u5BB6\u533A\u53F7\uFF09", placeholder: "\u5982\uFF1A+1 415 000 0000" },
+          shipping_address: { label: "\u8BE6\u7EC6\u82F1\u6587\u6536\u4EF6\u5730\u5740", placeholder: "Street, Suite, City, State/Province, Country" },
+          postal_code: { label: "\u90AE\u653F\u7F16\u7801 (ZIP / Postal Code)", placeholder: "\u8F93\u5165\u5F53\u5730\u90AE\u7F16" },
+          samples: { label: "\u5BC4\u9001\u6837\u54C1\u660E\u7EC6", addButtonText: "+ \u6DFB\u52A0\u6837\u54C1\u9879" },
+          "samples.model_name": { label: "\u6837\u54C1\u540D\u79F0\u4E0E\u89C4\u683C\u578B\u53F7", placeholder: "\u578B\u53F7 / \u989C\u8272 / \u53C2\u6570" },
+          "samples.qty": { label: "\u5BC4\u6837\u6570\u91CF", placeholder: "1" },
+          "samples.unit_fee": { label: "\u6837\u54C1\u5355\u4EF7\uFF08\u514D\u8D39\u586B 0\uFF09", placeholder: "0.00" },
+          "samples.line_fee": { label: "\u6837\u54C1\u8D39\u5C0F\u8BA1" },
+          charge_type: {
+            label: "\u8D39\u7528\u7ED3\u7B97\u65B9\u5F0F",
+            options: [
+              { key: "free_sample", label: "\u514D\u8D39\u5BC4\u6837\uFF08\u516C\u53F8\u627F\u62C5\uFF09" },
+              { key: "paid_sample", label: "\u6536\u53D6\u6837\u54C1\u8D39/\u5FEB\u9012\u8D39\uFF08\u5927\u8D27\u9000\u8FD8\uFF09" },
+              { key: "freight_collect", label: "\u63D0\u4F9B\u5BA2\u6237\u5230\u4ED8\u8D26\u53F7 (DHL/FedEx)" }
+            ]
+          },
+          express_fee: { label: "\u9884\u6536\u56FD\u9645\u5FEB\u9012\u8D39", placeholder: "0.00" },
+          total_receivable: { label: "\u5E94\u6536\u8D39\u7528\u5408\u8BA1" },
+          tracking_no: { label: "\u5FEB\u9012\u5355\u53F7 / \u5230\u4ED8\u8D26\u53F7\u5907\u6CE8", placeholder: "\u5BC4\u51FA\u540E\u56DE\u586B DHL / FedEx / UPS \u5355\u53F7\uFF0C\u6216\u5907\u6CE8\u5BA2\u6237\u5230\u4ED8\u8D26\u53F7" }
+        }
+      },
+      en: {
+        title: "Sample Dispatch Request Form",
+        description: "Provide complete consignee address and sample items for international courier dispatch.",
+        button_text: "Submit Sample Request",
+        success_message: "Sample request submitted successfully!",
+        fields: {
+          recipient_name: { label: "Recipient Name & Company", placeholder: "Full name and company" },
+          contact_phone: { label: "Phone Number (with Country Code)", placeholder: "e.g. +44 20 0000 0000" },
+          shipping_address: { label: "Full Delivery Address", placeholder: "Street, City, State/Province, Country" },
+          postal_code: { label: "Postal / ZIP Code", placeholder: "ZIP / Postcode" },
+          samples: { label: "Sample Items", addButtonText: "+ Add Sample" },
+          "samples.model_name": { label: "Sample Model & Spec", placeholder: "Model / Color / Spec" },
+          "samples.qty": { label: "Qty", placeholder: "1" },
+          "samples.unit_fee": { label: "Sample Unit Fee", placeholder: "0.00" },
+          "samples.line_fee": { label: "Subtotal" },
+          charge_type: {
+            label: "Fee Policy",
+            options: [
+              { key: "free_sample", label: "Free Sample" },
+              { key: "paid_sample", label: "Paid Sample (Refundable on bulk order)" },
+              { key: "freight_collect", label: "Freight Collect (Courier Account)" }
+            ]
+          },
+          express_fee: { label: "Express Shipping Fee", placeholder: "0.00" },
+          total_receivable: { label: "Total Receivable" },
+          tracking_no: { label: "Courier Tracking No. / Collect Account", placeholder: "DHL / FedEx / UPS tracking or account number" }
+        }
+      }
+    }
+  }
+];
+
+// src/worker/db/form-templates.ts
+var DEFAULT_STYLE2 = {
+  primary_color: "#2563eb",
+  bg_color: "white",
+  border_radius: 8,
+  size: "medium"
+};
+var templatesSchemaReady = null;
+async function ensureFormTemplatesTable(db) {
+  if (!templatesSchemaReady) {
+    templatesSchemaReady = (async () => {
+      await db.prepare(`
+          CREATE TABLE IF NOT EXISTS form_templates (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            category TEXT NOT NULL DEFAULT 'custom',
+            description TEXT,
+            suggested_key TEXT,
+            render_template TEXT NOT NULL DEFAULT 'standard',
+            is_shared INTEGER NOT NULL DEFAULT 1,
+            site_id TEXT,
+            created_by TEXT,
+            fields_json TEXT NOT NULL,
+            style_config_json TEXT,
+            translations_json TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+          )
+        `).run();
+      await db.prepare("CREATE INDEX IF NOT EXISTS idx_form_templates_shared ON form_templates(is_shared)").run();
+      await db.prepare("CREATE INDEX IF NOT EXISTS idx_form_templates_site ON form_templates(site_id)").run();
+    })().catch((err) => {
+      templatesSchemaReady = null;
+      throw err;
+    });
+  }
+  return templatesSchemaReady;
+}
+__name(ensureFormTemplatesTable, "ensureFormTemplatesTable");
+function rowToTemplate(r) {
+  let fields = [];
+  let style = { ...DEFAULT_STYLE2 };
+  let translations = {};
+  try {
+    fields = JSON.parse(r.fields_json || "[]");
+  } catch {
+    fields = [];
+  }
+  try {
+    if (r.style_config_json) {
+      const p = JSON.parse(r.style_config_json);
+      style = {
+        primary_color: p.primary_color || DEFAULT_STYLE2.primary_color,
+        bg_color: p.bg_color || "white",
+        border_radius: typeof p.border_radius === "number" ? p.border_radius : 8,
+        size: p.size || "medium"
+      };
+    }
+  } catch {
+  }
+  try {
+    if (r.translations_json)
+      translations = JSON.parse(r.translations_json);
+  } catch {
+    translations = {};
+  }
+  return {
+    id: r.id,
+    scope: "custom",
+    name: r.name,
+    category: r.category || "custom",
+    description: r.description || "",
+    suggested_key: r.suggested_key || void 0,
+    render_template: r.render_template || "standard",
+    is_shared: Number(r.is_shared) === 1 ? 1 : 0,
+    site_id: r.site_id || null,
+    created_by: r.created_by || null,
+    fields,
+    translations_json: translations,
+    style,
+    created_at: r.created_at,
+    updated_at: r.updated_at
+  };
+}
+__name(rowToTemplate, "rowToTemplate");
+async function listAvailableFormTemplates(db, siteId) {
+  await ensureFormTemplatesTable(db);
+  const rows = siteId ? await db.prepare(
+    `SELECT * FROM form_templates
+           WHERE is_shared = 1 OR site_id = ?
+           ORDER BY updated_at DESC`
+  ).bind(siteId).all() : await db.prepare("SELECT * FROM form_templates WHERE is_shared = 1 ORDER BY updated_at DESC").all();
+  const customList = (rows.results || []).map(rowToTemplate);
+  return [...BUILTIN_FORM_TEMPLATES, ...customList];
+}
+__name(listAvailableFormTemplates, "listAvailableFormTemplates");
+async function getCustomFormTemplateById(db, id) {
+  await ensureFormTemplatesTable(db);
+  const r = await db.prepare("SELECT * FROM form_templates WHERE id = ?").bind(id).first();
+  if (!r)
+    return null;
+  return rowToTemplate(r);
+}
+__name(getCustomFormTemplateById, "getCustomFormTemplateById");
+async function createCustomFormTemplate(db, input) {
+  await ensureFormTemplatesTable(db);
+  const id = `tpl_usr_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 4)}`;
+  const now = Date.now();
+  const isSharedNum = input.is_shared ? 1 : 0;
+  await db.prepare(`
+      INSERT INTO form_templates (
+        id, name, category, description, suggested_key, render_template,
+        is_shared, site_id, created_by, fields_json, style_config_json, translations_json,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+    id,
+    input.name.trim(),
+    input.category || "custom",
+    (input.description || "").trim(),
+    input.suggested_key || "",
+    input.render_template || "standard",
+    isSharedNum,
+    input.site_id || null,
+    input.created_by || null,
+    JSON.stringify(input.fields || []),
+    JSON.stringify(input.style || DEFAULT_STYLE2),
+    JSON.stringify(input.translations_json || {}),
+    now,
+    now
+  ).run();
+  return await getCustomFormTemplateById(db, id);
+}
+__name(createCustomFormTemplate, "createCustomFormTemplate");
+async function updateCustomFormTemplateMeta(db, id, patch) {
+  await ensureFormTemplatesTable(db);
+  const existing = await getCustomFormTemplateById(db, id);
+  if (!existing)
+    return null;
+  const now = Date.now();
+  const nextName = patch.name !== void 0 ? patch.name.trim() || existing.name : existing.name;
+  const nextCat = patch.category ?? existing.category;
+  const nextDesc = patch.description !== void 0 ? patch.description.trim() : existing.description || "";
+  const nextShared = patch.is_shared !== void 0 ? patch.is_shared ? 1 : 0 : existing.is_shared;
+  const nextSiteId = patch.site_id !== void 0 ? patch.site_id : existing.site_id || null;
+  await db.prepare(`
+      UPDATE form_templates SET
+        name = ?,
+        category = ?,
+        description = ?,
+        is_shared = ?,
+        site_id = ?,
+        updated_at = ?
+      WHERE id = ?
+    `).bind(nextName, nextCat, nextDesc, nextShared, nextSiteId, now, id).run();
+  return getCustomFormTemplateById(db, id);
+}
+__name(updateCustomFormTemplateMeta, "updateCustomFormTemplateMeta");
+async function deleteCustomFormTemplate(db, id) {
+  await ensureFormTemplatesTable(db);
+  await db.prepare("DELETE FROM form_templates WHERE id = ?").bind(id).run();
+}
+__name(deleteCustomFormTemplate, "deleteCustomFormTemplate");
+
+// src/worker/routes/form-templates.ts
+init_sites();
+var formTemplatesRouter = new Hono2();
+function validateAdminFormFields(fields) {
+  if (!Array.isArray(fields))
+    return null;
+  for (const rawField of fields) {
+    if (!rawField || typeof rawField !== "object")
+      continue;
+    if (rawField.type === "formula") {
+      const check = validateFormulaSyntax(rawField.formula || "");
+      if (!check.valid) {
+        return `Invalid formula on field [${rawField.key}]: ${check.error || "syntax error"}`;
+      }
+    }
+    if (rawField.type === "repeater") {
+      if (!Array.isArray(rawField.subFields) || rawField.subFields.length === 0) {
+        return `Repeater field [${rawField.key}] must have at least one sub-field`;
+      }
+      for (const sf of rawField.subFields) {
+        if (sf.type === "repeater") {
+          return `Nested repeater is not allowed inside [${rawField.key}]`;
+        }
+        if (sf.type === "formula") {
+          const subCheck = validateFormulaSyntax(sf.formula || "");
+          if (!subCheck.valid) {
+            return `Invalid formula on [${rawField.key}.${sf.key}]: ${subCheck.error || "syntax error"}`;
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+__name(validateAdminFormFields, "validateAdminFormFields");
+function extractSiteId(c, body) {
+  return (c.req.query("site_id") || "").trim() || (c.req.header("X-Site-Id") || "").trim() || (typeof body?.site_id === "string" ? body.site_id.trim() : "");
+}
+__name(extractSiteId, "extractSiteId");
+formTemplatesRouter.get("/admin/form-templates", async (c) => {
+  try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
+    const siteId = extractSiteId(c);
+    if (siteId && !await agentCanAccessSite(c.env.DB, agent, siteId)) {
+      return c.json({ success: false, message: "No permission to access templates on this site" }, 403);
+    }
+    const list = await listAvailableFormTemplates(c.env.DB, siteId || void 0);
+    return c.json({ success: true, data: list });
+  } catch (err) {
+    return c.json({ success: false, message: err.message }, 500);
+  }
+});
+formTemplatesRouter.post("/admin/form-templates", async (c) => {
+  try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
+    const body = await c.req.json();
+    const siteId = extractSiteId(c, body);
+    const isShared = body.is_shared !== void 0 ? Boolean(body.is_shared) : true;
+    if (!isShared && !siteId) {
+      return c.json({ success: false, message: "Select a site when saving a site-only template" }, 400);
+    }
+    if (siteId && !await agentCanAccessSite(c.env.DB, agent, siteId)) {
+      return c.json({ success: false, message: "No permission for this site" }, 403);
+    }
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name) {
+      return c.json({ success: false, message: "Template name is required" }, 400);
+    }
+    if (!Array.isArray(body.fields) || body.fields.length === 0) {
+      return c.json({ success: false, message: "Template must contain at least one field" }, 400);
+    }
+    const fieldErr = validateAdminFormFields(body.fields);
+    if (fieldErr) {
+      return c.json({ success: false, message: fieldErr }, 400);
+    }
+    const created = await createCustomFormTemplate(c.env.DB, {
+      name,
+      category: body.category || "custom",
+      description: body.description || "",
+      suggested_key: body.suggested_key || "",
+      render_template: body.render_template || "standard",
+      is_shared: isShared,
+      site_id: siteId || null,
+      created_by: agent.id,
+      fields: body.fields,
+      style: body.style || {},
+      translations_json: body.translations_json || {}
+    });
+    return c.json({ success: true, data: created });
+  } catch (err) {
+    return c.json({ success: false, message: err.message }, 500);
+  }
+});
+formTemplatesRouter.patch("/admin/form-templates/:id", async (c) => {
+  try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
+    const id = c.req.param("id");
+    if (id.startsWith("tpl_sys_")) {
+      return c.json({ success: false, message: "Built-in system templates are read-only" }, 403);
+    }
+    const existing = await getCustomFormTemplateById(c.env.DB, id);
+    if (!existing) {
+      return c.json({ success: false, message: "Template not found" }, 404);
+    }
+    if (agent.role !== "admin" && existing.created_by && existing.created_by !== agent.id) {
+      return c.json({ success: false, message: "Only the creator or admin can modify this template" }, 403);
+    }
+    const body = await c.req.json();
+    const siteId = extractSiteId(c, body) || existing.site_id || null;
+    const nextShared = body.is_shared !== void 0 ? Boolean(body.is_shared) : void 0;
+    if (nextShared === false && !siteId) {
+      return c.json({ success: false, message: "Site ID is required when disabling cross-site sharing" }, 400);
+    }
+    const updated = await updateCustomFormTemplateMeta(c.env.DB, id, {
+      name: body.name,
+      category: body.category,
+      description: body.description,
+      is_shared: nextShared,
+      site_id: siteId
+    });
+    return c.json({ success: true, data: updated });
+  } catch (err) {
+    return c.json({ success: false, message: err.message }, 500);
+  }
+});
+formTemplatesRouter.delete("/admin/form-templates/:id", async (c) => {
+  try {
+    const agent = await requireAgent(c);
+    if (isErrorResponse(agent))
+      return agent;
+    const id = c.req.param("id");
+    if (id.startsWith("tpl_sys_")) {
+      return c.json({ success: false, message: "Built-in system templates cannot be deleted" }, 403);
+    }
+    const existing = await getCustomFormTemplateById(c.env.DB, id);
+    if (!existing) {
+      return c.json({ success: false, message: "Template not found" }, 404);
+    }
+    if (agent.role !== "admin" && existing.created_by && existing.created_by !== agent.id) {
+      return c.json({ success: false, message: "Only the creator or admin can delete this template" }, 403);
+    }
+    await deleteCustomFormTemplate(c.env.DB, id);
+    return c.json({ success: true });
+  } catch (err) {
+    return c.json({ success: false, message: err.message }, 500);
+  }
+});
+
+// src/worker/routes/forms.ts
 var formsRouter = new Hono2();
+formsRouter.route("/", formTemplatesRouter);
 function readSiteId(c, body) {
   return (c.req.query("site_id") || "").trim() || (c.req.header("X-Site-Id") || "").trim() || (typeof body?.site_id === "string" ? body.site_id.trim() : "");
 }
@@ -7385,7 +8796,7 @@ formsRouter.post("/admin/forms", async (c) => {
     if (isErrorResponse(admin))
       return admin;
     const body = await c.req.json();
-    const { key, fields, style, translations_json } = body;
+    const { key, fields, style, translations_json, render_template } = body;
     const siteId = readSiteId(c, body);
     if (!siteId) {
       return c.json({ success: false, message: "Select a site (site_id)" }, 400);
@@ -7405,6 +8816,10 @@ formsRouter.post("/admin/forms", async (c) => {
     if (!hasTitle) {
       return c.json({ success: false, message: "Enter a form title in at least one language" }, 400);
     }
+    const fieldErr = validateAdminFormFields(fields);
+    if (fieldErr) {
+      return c.json({ success: false, message: fieldErr }, 400);
+    }
     const cleanedKey = key.trim().toLowerCase().replace(/[^a-z0-9_]/g, "_");
     const existing = await getCustomFormByKey(c.env.DB, cleanedKey, siteId);
     if (existing) {
@@ -7414,6 +8829,7 @@ formsRouter.post("/admin/forms", async (c) => {
       key: cleanedKey,
       site_id: siteId,
       allowed_domains: "",
+      render_template: render_template || "standard",
       fields: fields || [],
       style: style || {},
       translations_json
@@ -7430,7 +8846,7 @@ formsRouter.put("/admin/forms/:id", async (c) => {
       return admin;
     const id = c.req.param("id");
     const body = await c.req.json();
-    const { fields, style, translations_json } = body;
+    const { fields, style, translations_json, render_template } = body;
     const siteId = readSiteId(c, body);
     const form = await getCustomFormById(c.env.DB, id);
     if (!form) {
@@ -7452,8 +8868,13 @@ formsRouter.put("/admin/forms/:id", async (c) => {
     if (!hasTitle) {
       return c.json({ success: false, message: "Enter a form title in at least one language" }, 400);
     }
+    const fieldErr = validateAdminFormFields(fields);
+    if (fieldErr) {
+      return c.json({ success: false, message: fieldErr }, 400);
+    }
     await updateCustomForm(c.env.DB, id, {
       allowed_domains: "",
+      render_template,
       fields: fields || [],
       style: style || {},
       translations_json
@@ -7571,30 +8992,28 @@ formsRouter.post("/public/forms/:key/submit", async (c) => {
     if (!data || typeof data !== "object") {
       return c.json({ success: false, message: "Invalid submission payload" }, 400);
     }
-    for (const field of form.fields) {
-      if (field.required) {
-        const val = data[field.key];
-        if (val === void 0 || val === null || val === "" || Array.isArray(val) && val.length === 0) {
-          return c.json({ success: false, message: `Required field missing: ${field.key}` }, 400);
-        }
-      }
+    const validation = validateFormSubmissionData(form.fields, data);
+    if (!validation.valid) {
+      return c.json({ success: false, message: formatFormValidationError(validation, false) }, 400);
     }
+    const computedPayload = normalizeAndComputeFormData(form.fields, data);
     const geo = extractClientGeo(c.req.raw);
     const subId = await insertFormSubmission(c.env.DB, {
       form_key: key,
       site_id: site.id,
       visitor_id,
-      data,
+      data: computedPayload,
       ip: geo.ip,
       country: geo.country,
       city: geo.city,
       source_url: source_url || c.req.header("referer") || ""
     });
+    const customSuccessMsg = Object.values(form.translations_json || {}).map((b) => b?.success_message?.trim()).find(Boolean);
     return c.json({
       success: true,
       data: {
         id: subId,
-        message: form.style?.success_message || "Submitted successfully!"
+        message: customSuccessMsg || "Submitted successfully!"
       }
     });
   } catch (err) {
